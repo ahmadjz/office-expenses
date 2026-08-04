@@ -1,0 +1,15 @@
+{
+  "date": "2026-07-30",
+  "payer": "ahmad",
+  "item": "جبنة شلل ومرتديلا",
+  "amount": 5500,
+  "sharers": [
+    "ahmad",
+    "kasem",
+    "abu-mohsen",
+    "abu-obaida"
+  ],
+  "id": "2026-07-30-260780",
+  "createdAt": "2026-08-04T07:03:37.841Z",
+  "issue": 1
+}
