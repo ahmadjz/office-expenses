@@ -1,0 +1,32 @@
+@import "tailwindcss" source(none);
+@source "../";
+
+@theme {
+  --font-heading: "Noto Naskh Arabic", serif;
+  --font-sans: "Noto Sans Arabic", sans-serif;
+}
+
+:root {
+  --color-primary: #1E40AF;
+  --color-on-primary: #FFFFFF;
+  --color-secondary: #3B82F6;
+  --color-positive: #059669;
+  --color-destructive: #DC2626;
+  --color-negative: #F87171;
+  --color-background: #0F172A;
+  --color-foreground: #FFFFFF;
+  --color-surface: #101A34;
+  --color-muted: #CBD5E1;
+  --color-border: rgba(255,255,255,.08);
+}
+
+@media (prefers-color-scheme: light) {
+  :root { --color-positive: #047857; --color-destructive: #B91C1C; --color-negative: #B91C1C; --color-background: #FFFFFF; --color-foreground: #0F172A; --color-surface: #F1F5F9; --color-muted: #475569; --color-border: rgba(15,23,42,.10); }
+}
+
+* { box-sizing: border-box; }
+html { background: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+button, a, input { -webkit-tap-highlight-color: transparent; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }

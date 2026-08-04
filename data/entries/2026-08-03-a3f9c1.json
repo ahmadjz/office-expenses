@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-03-a3f9c1",
+  "date": "2026-08-03",
+  "payer": "ahmad",
+  "item": "نص كيلو جبنة",
+  "amount": 100,
+  "sharers": ["ahmad", "abu-obaida", "kasem", "abu-adnan"],
+  "createdAt": "2026-08-03T09:12:00.000Z",
+  "issue": 12
+}

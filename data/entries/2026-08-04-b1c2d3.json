@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-04-b1c2d3",
+  "date": "2026-08-04",
+  "payer": "kasem",
+  "item": "خبز وفلافل",
+  "amount": 60,
+  "sharers": ["ahmad", "abu-obaida", "kasem", "abu-khaled", "abu-tareq", "abu-adnan"],
+  "createdAt": "2026-08-04T08:30:00.000Z",
+  "issue": 13
+}
