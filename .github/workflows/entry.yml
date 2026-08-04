@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   validate-and-commit:
-    if: contains(github.event.issue.labels.*.name, 'entry')
     runs-on: ubuntu-latest
     outputs:
       isValid: ${{ steps.process.outputs.isValid }}
