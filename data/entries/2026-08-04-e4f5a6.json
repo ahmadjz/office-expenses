@@ -1,10 +1,10 @@
 {
-  "id": "2026-08-06-e4f5a6",
-  "date": "2026-08-06",
+  "id": "2026-08-04-e4f5a6",
+  "date": "2026-08-04",
   "payer": "abu-khaled",
   "item": "شاي",
   "amount": 100,
   "sharers": ["ahmad", "abu-obaida", "kasem"],
-  "createdAt": "2026-08-06T10:20:00.000Z",
+  "createdAt": "2026-08-04T10:20:00.000Z",
   "issue": 14
 }
