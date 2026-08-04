@@ -5,7 +5,7 @@ import { parseIssueBody } from '../src/lib/issue-parser.ts'
 import { splitAmount } from '../src/lib/split.ts'
 import { memberName } from '../src/data/members.ts'
 
-const ALLOWLIST = ['ahmadjz']
+const ALLOWLIST = ['ahmadjz', 'amidan99']
 const outputFile = process.env.GITHUB_OUTPUT
 
 function setOutput(name, value) {
