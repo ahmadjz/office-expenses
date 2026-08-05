@@ -1,0 +1,16 @@
+{
+  "date": "2026-08-05",
+  "payer": "ahmad",
+  "item": "نص كيلو جبنة حلوم",
+  "amount": 390,
+  "sharers": [
+    "ahmad",
+    "abu-obaida",
+    "kasem",
+    "abu-adnan",
+    "abu-mohsen"
+  ],
+  "id": "2026-08-05-57afdc",
+  "createdAt": "2026-08-05T09:44:43.992Z",
+  "issue": 10
+}
