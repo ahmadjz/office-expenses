@@ -6,6 +6,7 @@ import { splitAmount } from '../src/lib/split.ts'
 import { memberName } from '../src/data/members.ts'
 
 const ALLOWLIST = ['ahmadjz', 'amidan99']
+const DIRECTORIES = { expense: 'data/entries', payment: 'data/payments' }
 const outputFile = process.env.GITHUB_OUTPUT
 
 function setOutput(name, value) {
@@ -20,6 +21,25 @@ function makeId(date) {
 async function reject(message) {
   await setOutput('isValid', 'false')
   await setOutput('message', message.replaceAll('\n', ' '))
+}
+
+async function writeRecord(kind, record) {
+  const directory = DIRECTORIES[kind]
+  const destination = resolve(directory, `${record.id}.json`)
+  await mkdir(resolve(directory), { recursive: true })
+  await writeFile(destination, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
+  return destination
+}
+
+function describeExpense(entry) {
+  const breakdown = [...splitAmount(entry.amount, entry.sharers)]
+    .map(([id, share]) => `${memberName(id)}: ${share} ل.س`)
+    .join('، ')
+  return `تم حفظ الإدخال بنجاح. الحصص: ${breakdown}`
+}
+
+function describePayment(payment) {
+  return `تم تسجيل الدفعة بنجاح: ${memberName(payment.from)} سدّد ${payment.amount} ل.س لـ ${memberName(payment.to)}.`
 }
 
 async function main() {
@@ -38,16 +58,12 @@ async function main() {
     await reject('رقم الطلب غير صالح.')
     return
   }
-  const entry = { ...parsed.data, id: makeId(parsed.data.date), createdAt: new Date().toISOString(), issue }
-  const destination = resolve('data/entries', `${entry.id}.json`)
-  await mkdir(resolve('data/entries'), { recursive: true })
-  await writeFile(destination, `${JSON.stringify(entry, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
-  const breakdown = [...splitAmount(entry.amount, entry.sharers)]
-    .map(([id, share]) => `${memberName(id)}: ${share} ل.س`)
-    .join('، ')
+  const record = { ...parsed.data, id: makeId(parsed.data.date), createdAt: new Date().toISOString(), issue }
+  const destination = await writeRecord(parsed.kind, record)
   await setOutput('isValid', 'true')
+  await setOutput('kind', parsed.kind)
   await setOutput('filename', destination)
-  await setOutput('message', `تم حفظ الإدخال بنجاح. الحصص: ${breakdown}`)
+  await setOutput('message', parsed.kind === 'payment' ? describePayment(record) : describeExpense(record))
 }
 
 main().catch(async (error) => {

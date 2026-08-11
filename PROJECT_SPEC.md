@@ -4,7 +4,8 @@ A static Arabic (RTL) web app for tracking shared office purchases, hosted on Gi
 Data lives as JSON files in this repo. New entries arrive via a **prefilled GitHub issue**,
 which a GitHub Action validates, commits, and then rebuilds + redeploys the site.
 
-**Status:** specification only. No code written yet.
+**Status:** built and deployed. Purchases, per-person shares, weekly summaries, and paybacks
+with settle-up suggestions are all live.
 
 ---
 
@@ -18,6 +19,11 @@ We need a record of who paid, what they bought, when, who ate it, and how much e
 > أحمد اشترى نص كيلو جبنة بـ 100
 > وأكل من الجبنة: أحمد، أبو عبيدة، كاسم، أبو عدنان
 > ⟹ 4 أشخاص ⟹ **25 للشخص**
+
+Debts also get **paid back**, and that has to be recorded or the ledger only ever grows:
+
+> أبو عبيدة سدّد لأحمد 25
+> ⟹ أبو عبيدة صار صفر، وصافي أحمد نزل من +75 إلى +50
 
 ---
 
@@ -76,7 +82,37 @@ means hand-editing and git history stay clean, and two entries can never collide
 **`payer` need not be in `sharers`.** Someone can buy something they don't eat.
 In the canonical example أحمد *is* in `sharers`, but that's incidental.
 
-### 3.2 Build-time baking
+### 3.2 One file per payback
+
+`data/payments/<id>.json` — a payback (تسديد) from one member to another. Same one-file-per-record
+rule, same id format, a **separate directory** so the two record types never need a discriminator
+field on disk and each keeps a strict schema.
+
+```json
+{
+  "id": "2026-08-05-b71d20",
+  "date": "2026-08-05",
+  "from": "abu-obaida",
+  "to": "ahmad",
+  "amount": 25,
+  "createdAt": "2026-08-05T10:00:00.000Z",
+  "issue": 17
+}
+```
+
+| field | type | rules |
+|---|---|---|
+| `from` | member id | Who handed over the money. |
+| `to` | member id | Who received it. **Must differ from `from`.** |
+| `amount` | integer | Same rules as an entry's `amount`. |
+
+`date`, `id`, `createdAt`, `issue` follow §3.1 exactly.
+
+**A payback is not validated against what's actually owed.** Over- and under-payment are both
+recordable — the ledger's job is to record what happened, not to referee it. A 30 payback against a
+25 debt simply leaves the payer 5 in credit.
+
+### 3.3 Build-time baking
 
 The app does **not** fetch data at runtime. Vite imports every entry at build time:
 
@@ -122,6 +158,20 @@ entry always yields the same per-person numbers.
 The per-entry card shows the plain figure `amount ÷ n` when it divides evenly, and the exact
 per-person breakdown when it doesn't (so nobody wonders why they owe 34 and their neighbour 33).
 
+### Settle-up — minimal transfers
+
+Balances are a **pot**, not a web of pairwise debts: each member carries one number,
+`دفع − عليه + سدّد`. A payback moves `amount` from the payer's side of the pot to the receiver's.
+
+`suggestSettlements` turns those balances into the **fewest transfers that zero everyone out**:
+sort debtors and creditors by size, repeatedly match the largest of each, and move the smaller of
+the two amounts. Ties break on the §2 canonical order, so the same balances always produce the same
+suggestions.
+
+**Invariant: every net sums to zero, so the greedy match always terminates with nothing left over.**
+Both halves have unit tests — that the nets sum to zero, and that applying every suggested transfer
+leaves all balances at zero.
+
 ---
 
 ## 5. Screens
@@ -139,12 +189,20 @@ Weeks are ordered newest-first; entries within a week are newest-first.
 ┌──────────────────────────────────────────┐
 │  أسبوع ١ – ٧ آب            المجموع ١٢٬٤٠٠ │
 │  ┌────────────────────────────────────┐  │
-│  │ الاسم        دفع     عليه   الصافي │  │
-│  │ أحمد       ٨٬٠٠٠   ٣٬١٠٠   +٤٬٩٠٠ │  │
-│  │ أبو عبيدة      ٠   ٢٬٢٠٠   −٢٬٢٠٠ │  │
-│  │ كاسم       ٤٬٤٠٠   ٢٬٩٠٠   +١٬٥٠٠ │  │
+│  │ المبالغ بالليرة السورية            │  │
+│  │ الاسم      دفع    عليه  سدّد الصافي│  │
+│  │ أحمد     ٨٬٠٠٠  ٣٬١٠٠  −٤٠٠ +٤٬٥٠٠│  │
+│  │ أبو عبيدة    ٠  ٢٬٢٠٠  +٤٠٠ −١٬٨٠٠│  │
+│  │ كاسم     ٤٬٤٠٠  ٢٬٩٠٠     ٠ +١٬٥٠٠│  │
 │  │ …                                  │  │
 │  └────────────────────────────────────┘  │
+│  ┌────────────────────────────────────┐  │
+│  │ التسوية المقترحة                   │  │
+│  │ أبو عبيدة ← أحمد   ١٬٨٠٠    تسجيل │  │
+│  └────────────────────────────────────┘  │
+│                                          │
+│  ٥ آب   أبو عبيدة ← أحمد                 │
+│         تسديد ٤٠٠                        │
 │                                          │
 │  ٣ آب   أحمد — نص كيلو جبنة              │
 │         ١٠٠ ÷ ٤ =  ٢٥ للشخص              │
@@ -156,21 +214,43 @@ Weeks are ordered newest-first; entries within a week are newest-first.
 └──────────────────────────────────────────┘
 ```
 
-**Week summary table** — one row per member who appears in that week (paid or shared):
+Paybacks and purchases share one chronological list inside the week, newest first, `createdAt`
+breaking same-day ties.
+
+**Week summary table** — one row per member who appears in that week (paid, shared, or settled):
 
 - **دفع** — sum of `amount` for entries where they are `payer`
 - **عليه** — sum of their individual share across every entry in the week
-- **الصافي** — `دفع − عليه`. Positive = the office owes them. Negative = they owe the office.
+- **سدّد** — paybacks they *made* minus paybacks they *received*, signed
+- **الصافي** — `دفع − عليه + سدّد`. Positive = the office owes them. Negative = they owe the office.
 
 Colour-code the net with green/red **plus** a `+`/`−` sign and an arrow icon — never colour
 alone (WCAG: don't encode meaning in colour only).
 
-The summary is **per week only**. There is no cross-week running balance and no settle-up
-engine; that was explicitly scoped out.
+Table cells carry bare numbers with the currency stated once in a `<caption>`; repeating `ل.س` in
+every cell wrapped each figure onto two lines. Signed figures sit in a `dir="ltr"` span so the sign
+stays on the same side of the digits regardless of what neighbours it in the RTL flow.
 
-### 5.2 Add-entry sheet
+Under each table, **التسوية المقترحة** lists the minimal transfers (§4) for that week. Each row is a
+button that opens the payback sheet already filled in.
 
-Bottom sheet, drag-to-dismiss, opened by a full-width sticky CTA at the bottom of the feed.
+### 5.2 The settlement window
+
+The summary is still **per week only** — there is no cross-week running balance. That makes *when* a
+payback is dated load-bearing: one dated outside the week of the debt it settles lands in a different
+table and never cancels it.
+
+So a suggestion rendered under week X prefills its date as `min(weekEnd(X), today)` — inside week X
+by construction, and never past the schema's "not beyond tomorrow" rule. Recording a suggested
+transfer therefore zeroes the week it came from.
+
+A payback typed manually gets today's date, which is only correct if it settles *this* week's debts.
+Fix by editing the date in the sheet before sending, or the JSON file afterwards.
+
+### 5.3 Add-entry sheet
+
+Bottom sheet, drag-to-dismiss, opened by the primary half of the sticky CTA pair at the bottom of
+the feed.
 
 | field | control |
 |---|---|
@@ -195,10 +275,29 @@ Two actions:
 Validation is inline, on blur, with the error message directly under its field.
 The submit button is disabled until the form is valid, and states *why* it's disabled.
 
-### 5.3 No edit, no delete
+### 5.4 Record-payback sheet
 
-Deliberately out of scope. A wrong entry is fixed by editing
-`data/entries/<id>.json` directly on github.com — the push rebuilds the site.
+Same chrome (`Sheet`), same two actions (`IssueActions`), opened either by the secondary
+**تسجيل دفعة** CTA or by tapping a suggested transfer.
+
+| field | control |
+|---|---|
+| من دفع؟ | 7 selectable chips, single-select |
+| لمن دفع؟ | chips, single-select, **excluding whoever is selected as payer** |
+| المبلغ | numeric input, `inputMode="numeric"`, integer only |
+| التاريخ | date input (§5.2 for what it defaults to) |
+
+Filtering the payer out of the recipient chips makes `from === to` unreachable through the UI —
+the schema still rejects it, because the issue path accepts hand-written JSON too. Picking a payer
+who is already the recipient clears the recipient rather than leaving an invalid pair selected.
+
+The sheet mounts with its draft as initial state and unmounts on close, so each open starts from
+whatever prefill it was given.
+
+### 5.5 No edit, no delete
+
+Deliberately out of scope. A wrong record is fixed by editing `data/entries/<id>.json` or
+`data/payments/<id>.json` directly on github.com — the push rebuilds the site.
 Since one person enters all data, a UI for this would be pure cost.
 
 ---
@@ -221,13 +320,13 @@ No token exists anywhere in the app.
         │  tap "Submit new issue"
         ▼
   Action  on: issues.opened
-        │  ├─ label is `entry`?              else: ignore
         │  ├─ author ∈ ALLOWLIST?            else: comment + close (not_planned)
         │  ├─ parse ```json block from body
-        │  ├─ validate against schema        else: comment the error + close
-        │  ├─ write data/entries/<id>.json
+        │  ├─ read `kind` → expense | payment
+        │  ├─ validate against that schema   else: comment the error + close
+        │  ├─ write data/{entries,payments}/<id>.json
         │  ├─ commit
-        │  └─ comment ✅ with the per-person breakdown + close
+        │  └─ comment ✅ with the breakdown + close
         ▼
   Deploy job → build → GitHub Pages          (~1–2 min total)
 ```
@@ -244,6 +343,26 @@ https://github.com/ahmadjz/office-expenses/issues/new
 Plain `title` + `body` params, **not** an issue-form template — a fenced JSON block is far
 easier to parse reliably than form-field markdown, and prefilling a `.yml` issue form requires
 matching field ids that break whenever the template changes.
+
+### Routing expenses vs paybacks
+
+One workflow handles both. The JSON block carries a `kind` discriminator:
+
+```json
+{ "kind": "payment", "date": "2026-08-05", "from": "abu-obaida", "to": "ahmad", "amount": 25 }
+```
+
+**`kind` is stripped before validation and never stored** — the directory already says which
+type a file is, so putting it on disk would be a second source of truth that could disagree.
+
+**A missing `kind` means `expense`.** Every issue link built before this feature existed omits it,
+and those links live in people's WhatsApp history; defaulting keeps them working. An unrecognised
+`kind` is rejected rather than defaulted, so a typo fails loudly instead of silently booking a
+payback as a purchase.
+
+Routing by `kind` rather than by issue label is deliberate: the workflow already ignores labels
+(an unknown label in an `issues/new` URL is silently dropped, which would make label-based routing
+fail invisibly), and the label is not available to a hand-written submission relayed over WhatsApp.
 
 ### Authorization
 
@@ -390,9 +509,15 @@ Tests where a bug would cost real money or silently corrupt data.
 - The canonical example: `100 / [ahmad, abu-obaida, kasem, abu-adnan]` → `25` each
 - Week bucketing — Saturday boundary, month boundary, year boundary
 - Week summary — `دفع`, `عليه`, `الصافي` on a fixture with a payer who isn't a sharer
+- Week summary — a payback zeroes the payer and reduces the receiver by the same amount; a member
+  who appears *only* through a payback still gets a row; every net sums to zero
+- `suggestSettlements` — applying every suggested transfer leaves all balances at zero, and moves
+  exactly the outstanding total; canonical-order tiebreak is deterministic
 - Zod schema — rejects unknown member ids, empty `sharers`, zero/negative/float `amount`,
-  duplicate sharers
-- Issue-body parser — extracts the JSON block; rejects malformed input without throwing
+  duplicate sharers, and a payback whose `from` equals its `to`
+- Issue-body parser — extracts the JSON block; rejects malformed input without throwing; routes on
+  `kind`; **still parses a payload with no `kind` as an expense**; rejects an unknown `kind`
+- Feed grouping — purchases and paybacks land in the same Saturday week and interleave newest-first
 
 **Skip:** component render smoke tests, presentational-prop assertions, mock-call-only tests.
 
@@ -402,7 +527,9 @@ Tests where a bug would cost real money or silently corrupt data.
 
 ```
 office-expenses/
-├── data/entries/*.json            ← the ledger; Action writes here, hand-editable
+├── data/
+│   ├── entries/*.json             ← purchases; Action writes here, hand-editable
+│   └── payments/*.json            ← paybacks; same rules
 ├── .github/workflows/
 │   ├── entry.yml                  ← issues.opened → validate → commit → call deploy
 │   └── deploy.yml                 ← on: push + workflow_call → build → Pages
@@ -410,13 +537,20 @@ office-expenses/
 ├── src/
 │   ├── data/members.ts            ← the 7, canonical order
 │   ├── lib/
-│   │   ├── schema.ts              ← Zod, shared with the Action
+│   │   ├── schema.ts              ← Zod for both types, shared with the Action
 │   │   ├── split.ts               ← largest-remainder
+│   │   ├── settle.ts              ← minimal transfers to zero every balance
 │   │   ├── week.ts                ← Saturday bucketing
-│   │   ├── summary.ts             ← per-week per-member paid/owed/net
-│   │   ├── entries.ts             ← import.meta.glob + sort
-│   │   └── issue-url.ts           ← prefilled URL builder
+│   │   ├── summary.ts             ← per-week per-member paid/owed/settled/net
+│   │   ├── feed.ts                ← week grouping + expense/payback interleave
+│   │   ├── records.ts             ← shared glob-validate-sort loader
+│   │   ├── entries.ts             ← import.meta.glob + parseRecords
+│   │   ├── payments.ts            ← same, for paybacks
+│   │   └── issue-url.ts           ← prefilled URL builders (both kinds)
 │   ├── components/                ← small, one concern each
+│   │   ├── Sheet.tsx              ← shared bottom-sheet chrome
+│   │   ├── IssueActions.tsx       ← shared إرسال/نسخ pair + build notice
+│   │   └── SettleSuggestions.tsx  ← التسوية المقترحة, each row prefills the sheet
 │   └── styles/tokens.css
 ├── AGENTS.md
 └── PROJECT_SPEC.md                ← this file
@@ -429,7 +563,14 @@ office-expenses/
 | decision | choice | why |
 |---|---|---|
 | Write path | Prefilled GitHub issue → Action | No credential anywhere in a static app; the human's GitHub login *is* the auth |
-| Scope | Log + per-entry share + weekly summary | No cross-week balances or settle-up engine — explicitly scoped out |
+| Scope | Log + per-entry share + weekly summary | Cross-week running balances stay out; a week is the unit that gets settled |
+| Paybacks | Recorded as their own record type | "What's left to pay" is unanswerable if only debts are recorded and never repayments |
+| Debt model | Pot (one net per member) | 7 members would otherwise mean up to 21 pairwise lines; the office settles as a pot |
+| Payback routing | `kind` in the JSON block | Labels are silently dropped from `issues/new` URLs and absent on relayed submissions |
+| Payback storage | Separate `data/payments/` | Keeps both Zod schemas strict with no on-disk discriminator to disagree with the path |
+| Settle-up | Minimal-transfer suggestions | Makes the weekly table actionable, and one tap prefills the payback that zeroes it |
+| Payback date | Prefilled inside the settled week | Weekly-only tables mean a payback dated elsewhere never cancels the debt it settles |
+| Over/under payment | Allowed | The ledger records what happened; refereeing it is a person's job |
 | Currency | SYP, integer, largest-remainder | Shares must sum to the exact total; no float drift |
 | Freshness | Wait for rebuild (~1–2 min), stated honestly | Buys a far simpler app; no optimistic UI or reconciliation |
 | Visibility | Public repo | Free plan can't serve Pages from private; data is snack money |

@@ -1,21 +1,36 @@
 import { MEMBERS, type MemberId } from '../data/members'
-import type { Entry } from './schema'
+import type { Entry, Payment } from './schema'
 import { splitAmount } from './split'
 
-export type MemberSummary = { id: MemberId; paid: number; owed: number; net: number }
+export type MemberSummary = { id: MemberId; paid: number; owed: number; settled: number; net: number }
 
-export function summarizeWeek(entries: readonly Entry[]): MemberSummary[] {
-  const totals = new Map<MemberId, { paid: number; owed: number }>()
+type Totals = { paid: number; owed: number; settled: number }
+
+const NO_TOTALS: Totals = { paid: 0, owed: 0, settled: 0 }
+
+function accumulate(totals: Map<MemberId, Totals>, id: MemberId, change: Partial<Totals>): void {
+  const current = totals.get(id) ?? NO_TOTALS
+  totals.set(id, {
+    paid: current.paid + (change.paid ?? 0),
+    owed: current.owed + (change.owed ?? 0),
+    settled: current.settled + (change.settled ?? 0),
+  })
+}
+
+export function summarizeWeek(entries: readonly Entry[], payments: readonly Payment[]): MemberSummary[] {
+  const totals = new Map<MemberId, Totals>()
   for (const entry of entries) {
-    const payerTotals = totals.get(entry.payer) ?? { paid: 0, owed: 0 }
-    totals.set(entry.payer, { ...payerTotals, paid: payerTotals.paid + entry.amount })
+    accumulate(totals, entry.payer, { paid: entry.amount })
     for (const [memberId, share] of splitAmount(entry.amount, entry.sharers)) {
-      const memberTotals = totals.get(memberId) ?? { paid: 0, owed: 0 }
-      totals.set(memberId, { ...memberTotals, owed: memberTotals.owed + share })
+      accumulate(totals, memberId, { owed: share })
     }
+  }
+  for (const payment of payments) {
+    accumulate(totals, payment.from, { settled: payment.amount })
+    accumulate(totals, payment.to, { settled: -payment.amount })
   }
   return MEMBERS.flatMap(({ id }) => {
     const total = totals.get(id)
-    return total ? [{ id, ...total, net: total.paid - total.owed }] : []
+    return total ? [{ id, ...total, net: total.paid - total.owed + total.settled }] : []
   })
 }
