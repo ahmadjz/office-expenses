@@ -1,0 +1,15 @@
+{
+  "date": "2026-08-11",
+  "payer": "kasem",
+  "item": "خبز",
+  "amount": 100,
+  "sharers": [
+    "ahmad",
+    "kasem",
+    "abu-mohsen",
+    "abu-khaled"
+  ],
+  "id": "2026-08-11-f386ad",
+  "createdAt": "2026-08-11T07:00:34.358Z",
+  "issue": 16
+}
