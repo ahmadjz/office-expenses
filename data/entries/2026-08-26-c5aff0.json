@@ -1,0 +1,17 @@
+{
+  "date": "2026-08-26",
+  "payer": "ahmad",
+  "item": "جبنة حلوم",
+  "amount": 500,
+  "sharers": [
+    "kasem",
+    "abu-mohsen",
+    "abu-adnan",
+    "abu-khaled",
+    "ahmad",
+    "abu-obaida"
+  ],
+  "id": "2026-08-26-c5aff0",
+  "createdAt": "2026-08-27T06:42:55.506Z",
+  "issue": 49
+}
