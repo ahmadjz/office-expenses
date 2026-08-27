@@ -1,0 +1,15 @@
+{
+  "date": "2026-08-26",
+  "payer": "kasem",
+  "item": "علبة جبنة وعلبة شوكولا",
+  "amount": 400,
+  "sharers": [
+    "kasem",
+    "abu-mohsen",
+    "abu-adnan",
+    "abu-khaled"
+  ],
+  "id": "2026-08-26-4963ba",
+  "createdAt": "2026-08-27T06:40:40.553Z",
+  "issue": 47
+}
