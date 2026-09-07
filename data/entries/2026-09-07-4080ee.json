@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-07",
+  "payer": "ahmad",
+  "item": "زيتون",
+  "amount": 150,
+  "sharers": [
+    "kasem",
+    "abu-khaled",
+    "abu-adnan",
+    "ahmad"
+  ],
+  "id": "2026-09-07-4080ee",
+  "createdAt": "2026-09-07T10:20:25.608Z",
+  "issue": 66
+}
