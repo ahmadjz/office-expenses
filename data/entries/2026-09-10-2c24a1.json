@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-10",
+  "payer": "ahmad",
+  "item": "مرتديلا",
+  "amount": 125,
+  "sharers": [
+    "ahmad",
+    "kasem",
+    "abu-khaled",
+    "abu-adnan"
+  ],
+  "id": "2026-09-10-2c24a1",
+  "createdAt": "2026-09-10T11:52:51.114Z",
+  "issue": 72
+}
