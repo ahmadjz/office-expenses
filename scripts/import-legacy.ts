@@ -2,17 +2,17 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { ZodType } from 'zod'
 import { groupByWeek } from '../src/lib/feed'
-import { entrySchema, paymentSchema, type Entry, type Payment } from '../src/lib/schema'
-import { summarizeWeek } from '../src/lib/summary'
-import { buildImportPlan } from './import-plan'
+import type { Expense, Payment } from '../src/lib/schema'
+import { buildImportPlan, type ImportRow } from './import-plan'
+import { legacyEntrySchema, legacyPaymentSchema } from './legacy-schema'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const PB_URL = process.env.PB_URL ?? 'https://office.ahmadjz.tech'
 const DRY_RUN = process.argv.includes('--dry-run')
 
-type PbMember = { id: string; username: string }
-type PbExpense = { date: string; payer: string; item: string; amount: number; sharers: string[]; created: string }
-type PbPayment = { date: string; from: string; to: string; amount: number; created: string }
+type PbMember = { id: string; username: string; position: number }
+type PbExpense = Expense & Record<string, unknown>
+type PbPayment = Payment & Record<string, unknown>
 
 function requireEnv(name: string): string {
   const value = process.env[name]
@@ -48,26 +48,22 @@ async function listAll<T>(token: string, collection: string): Promise<T[]> {
   return page.items
 }
 
-function weeklySummaries(entries: readonly Entry[], payments: readonly Payment[]): string[] {
-  return groupByWeek(entries, payments).map((week) => {
-    const rows = summarizeWeek(week.entries, week.payments).map(({ id, paid, owed, settled, net }) => `${id}:${paid}/${owed}/${settled}/${net}`)
+function planAsRecords(plan: readonly ImportRow[]): { expenses: Expense[]; payments: Payment[] } {
+  const expenses = plan.flatMap((row, index) => row.collection === 'expenses' ? [{ ...row.body, id: row.legacyId, created: String(index).padStart(6, '0') }] : [])
+  const payments = plan.flatMap((row, index) => row.collection === 'payments' ? [{ ...row.body, id: row.legacyId, created: String(index).padStart(6, '0') }] : [])
+  return { expenses, payments }
+}
+
+function weeklySummaries(expenses: readonly Expense[], payments: readonly Payment[], order: ReadonlyMap<string, number>, usernameById: ReadonlyMap<string, string>): string[] {
+  return groupByWeek(expenses, payments, order).map((week) => {
+    const rows = week.summary.map(({ id, paid, owed, settled, net }) => `${usernameById.get(id)}:${paid}/${owed}/${settled}/${net}`)
     return `${week.weekStart}  ${rows.join('  ')}`
   })
 }
 
-function asLegacy(expenses: readonly PbExpense[], payments: readonly PbPayment[], usernameById: ReadonlyMap<string, string>) {
-  const slug = (id: string) => usernameById.get(id) as Entry['payer']
-  const filler = { id: '0000-00-00-000000', issue: 1 }
-  return {
-    entries: expenses.map((row): Entry => ({ ...filler, createdAt: row.created, date: row.date, payer: slug(row.payer), item: row.item, amount: row.amount, sharers: row.sharers.map(slug) })),
-    payments: payments.map((row): Payment => ({ ...filler, createdAt: row.created, date: row.date, from: slug(row.from), to: slug(row.to), amount: row.amount })),
-  }
-}
-
 async function main(): Promise<void> {
-  const legacyEntries = readLegacy('entries', entrySchema)
-  const legacyPayments = readLegacy('payments', paymentSchema)
-  const before = weeklySummaries(legacyEntries, legacyPayments)
+  const legacyEntries = readLegacy('entries', legacyEntrySchema)
+  const legacyPayments = readLegacy('payments', legacyPaymentSchema)
 
   const auth = await fetch(`${PB_URL}/api/collections/_superusers/auth-with-password`, {
     method: 'POST',
@@ -78,7 +74,9 @@ async function main(): Promise<void> {
   const { token } = (await auth.json()) as { token: string }
 
   const members = await listAll<PbMember>(token, 'members')
-  const plan = buildImportPlan(legacyEntries, legacyPayments, new Map(members.map((m) => [m.username, m.id])), 'ahmad')
+  const order = new Map(members.map((member) => [member.id, member.position]))
+  const usernameById = new Map(members.map((member) => [member.id, member.username]))
+  const plan = buildImportPlan(legacyEntries, legacyPayments, new Map(members.map((member) => [member.username, member.id])), 'ahmad')
   console.log(`legacy: ${legacyEntries.length} expenses, ${legacyPayments.length} payments → ${plan.length} rows`)
 
   const [existingExpenses, existingPayments] = await Promise.all([listAll(token, 'expenses'), listAll(token, 'payments')])
@@ -101,13 +99,12 @@ async function main(): Promise<void> {
     await api(token, 'PATCH', '/settings', { batch })
   }
 
-  const imported = asLegacy(
-    await listAll<PbExpense>(token, 'expenses'),
-    await listAll<PbPayment>(token, 'payments'),
-    new Map(members.map((m) => [m.id, m.username])),
-  )
-  const after = weeklySummaries(imported.entries, imported.payments)
-  const countsMatch = imported.entries.length === legacyEntries.length && imported.payments.length === legacyPayments.length
+  const planned = planAsRecords(plan)
+  const before = weeklySummaries(planned.expenses, planned.payments, order, usernameById)
+  const importedExpenses = await listAll<PbExpense>(token, 'expenses')
+  const importedPayments = await listAll<PbPayment>(token, 'payments')
+  const after = weeklySummaries(importedExpenses, importedPayments, order, usernameById)
+  const countsMatch = importedExpenses.length === legacyEntries.length && importedPayments.length === legacyPayments.length
   const summariesMatch = JSON.stringify(before) === JSON.stringify(after)
 
   console.log('\nweek  member:paid/owed/settled/net')

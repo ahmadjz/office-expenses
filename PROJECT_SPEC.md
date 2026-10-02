@@ -5,8 +5,8 @@ An Arabic (RTL) web app for tracking shared office purchases. A static React fro
 Every member has their own login. Viewing requires one; adding records needs one; editing,
 deleting, and managing members is admin-only.
 
-**Status:** migrating from the GitHub-issue + JSON-files design (purchases, shares, weekly
-summaries, paybacks, settle-up are all live there) to PocketBase. §14 lists what moves.
+**Status:** live at `https://office.ahmadjz.tech` since 2026-10-02. The GitHub-issue + JSON-files
+design it replaced is in git history; §14 records how the data moved.
 
 ---
 
@@ -183,6 +183,11 @@ deactivated account show the same message (`اسم المستخدم أو كلم�
 which usernames exist. The session persists in the PocketBase SDK's auth store; a header menu has
 **خروج**.
 
+The app refreshes the session on load, whenever the tab becomes visible, and every 5 minutes. A
+deactivated member's refresh fails, which signs them out. Without this, their open tab would keep
+showing stale data: the API already rejects them, but realtime sends nothing to a member who can no
+longer read.
+
 ### 5.2 Feed — grouped by week
 
 Weeks run **Saturday → Friday** (Levant work week). This is a single exported constant
@@ -299,6 +304,10 @@ server still rejects it. Picking a payer who is already the recipient clears the
 The sheet mounts with its draft as initial state and unmounts on close, so each open starts from
 whatever prefill it was given.
 
+A suggestion involving a **deactivated** member prefills only the active side: the server rejects
+inactive members on create, so offering them would only produce an error. To settle with someone who
+has left, the admin reactivates them, records the payback, and deactivates them again.
+
 ### 5.7 Edit and delete — admin only
 
 Admins see ✎ and 🗑 on every card. ✎ opens the same sheet (§5.5 / §5.6) prefilled with the record,
@@ -372,8 +381,14 @@ Loading and error states are real now:
 
 - First load shows a skeleton of the week cards, not a blank page.
 - A failed fetch shows `تعذّر تحميل البيانات` with a **إعادة المحاولة** button.
-- A record that fails Zod parsing is a bug, not user data — log it, skip that record, and show a
-  single banner. One bad row must not take down the whole feed.
+- An expense or payment that fails Zod parsing is a bug, not user data — log it, skip that record,
+  and show a single banner. One bad row must not take down the whole feed.
+- A **member** that fails parsing is the exception: it fails the whole load. Skipping one would shift
+  every split that member is part of (their `position` would vanish from the tiebreak).
+- A refetch that fails after data is on screen keeps the data but shows `تعذّر تحديث البيانات` with a
+  retry, so nobody records a settlement against balances they can't trust.
+- The app reloads on every realtime (re)connect, closing the gap between the first fetch and the
+  subscription, and any gap while offline.
 
 ---
 
@@ -402,7 +417,8 @@ locked to `rrsync /srv/office.ahmadjz.tech`:
 
 PocketBase applies migrations only on start, and the deploy key can't restart containers. A systemd
 path unit on the host (in `vps-infra`) watches `pb_migrations/` and restarts the container when it
-changes. Hooks reload on their own.
+changes. Hooks reload on their own. When migrations changed, the workflow waits for PocketBase to come back healthy
+before publishing `web/`, so a frontend never lands ahead of the schema it needs.
 
 Repo secrets: `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`.
 
@@ -523,27 +539,32 @@ rejected, a deactivated member cannot log in, a future date is rejected.
 ```
 office-expenses/
 ├── pocketbase/
-│   ├── pb_migrations/*.js        ← collections, fields, rules; seeds the 7 members
-│   └── pb_hooks/validate.pb.js   ← date window, from ≠ to, active-member checks
+│   ├── pb_migrations/*.js        ← collections, fields, rules, backups; seeds the 7 members
+│   └── pb_hooks/                 ← validate.pb.js wires ledger.js: date window, from ≠ to,
+│                                   active-member checks, next position
 ├── .github/workflows/
-│   └── deploy.yml                ← test → build → rsync web + pb_* to the VPS
+│   └── deploy.yml                ← test → test:pb → build → rsync pb_hooks, pb_migrations, web
 ├── scripts/
+│   ├── test-pb.mjs               ← server-rule tests against a throwaway PocketBase
+│   ├── pb-dev.mjs                ← local PocketBase for `npm run dev`
 │   └── import-legacy.ts          ← one-off: data/**/*.json → PocketBase (§14)
 ├── src/
+│   ├── hooks/
+│   │   ├── useAuth.ts            ← session state + periodic refresh (§5.1)
+│   │   └── useLedger.ts          ← load, error, realtime reload
 │   ├── lib/
 │   │   ├── pb.ts                 ← the one PocketBase client instance
 │   │   ├── api.ts                ← typed fetch/create/update/delete, Zod-parsed
 │   │   ├── schema.ts             ← Zod for members, expenses, payments, and the forms
+│   │   ├── roster.ts             ← members by position, names, selectable chips
 │   │   ├── split.ts              ← largest-remainder by position
 │   │   ├── settle.ts             ← minimal transfers to zero every balance
+│   │   ├── dates.ts              ← Damascus "today", calendar checks
 │   │   ├── week.ts               ← Saturday bucketing
 │   │   ├── summary.ts            ← per-week per-member paid/owed/settled/net
-│   │   └── feed.ts               ← week grouping + expense/payback interleave
-│   ├── components/
-│   │   ├── LoginView.tsx
-│   │   ├── MembersView.tsx       ← admin
-│   │   ├── Sheet.tsx             ← shared bottom-sheet chrome
-│   │   └── SettleSuggestions.tsx
+│   │   ├── feed.ts               ← week grouping + expense/payback interleave + summary
+│   │   └── archive.ts            ← recent vs archived weeks (§5.3)
+│   ├── components/               ← one concern each: views, sheets, cards
 │   └── styles/tokens.css
 ├── AGENTS.md
 └── PROJECT_SPEC.md               ← this file
@@ -579,7 +600,8 @@ office-expenses/
 
 ## 14. Migration from the GitHub-issue design
 
-One-off, run once against production, then the legacy path is deleted.
+Done on 2026-10-02: 38 expenses and 32 payments imported, every weekly summary identical. Kept for
+the record.
 
 1. Migrations create the collections and seed the seven members with positions 1–7 and their legacy
    slugs as usernames.

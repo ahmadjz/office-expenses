@@ -9,12 +9,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:pb": "node scripts/test-pb.mjs",
-    "import:legacy": "tsx scripts/import-legacy.ts"
+    "import:legacy": "tsx scripts/import-legacy.ts",
+    "pb:dev": "node scripts/pb-dev.mjs"
   },
   "dependencies": {
     "@fontsource/noto-naskh-arabic": "^5.3.0",
     "@fontsource/noto-sans-arabic": "^5.3.0",
     "lucide-react": "^0.468.0",
+    "pocketbase": "^0.28.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^3.24.0"

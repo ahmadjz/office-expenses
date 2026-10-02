@@ -1,31 +1,35 @@
-import type { Entry, Payment } from './schema'
+import type { Expense, Payment } from './schema'
+import type { MemberOrder } from './split'
+import { summarizeWeek, type MemberSummary } from './summary'
 import { getWeekStart } from './week'
 
-export type FeedItem = { kind: 'expense'; entry: Entry } | { kind: 'payment'; payment: Payment }
-export type FeedWeek = { weekStart: string; entries: Entry[]; payments: Payment[]; items: FeedItem[] }
+export type FeedItem = { kind: 'expense'; expense: Expense } | { kind: 'payment'; payment: Payment }
+export type FeedWeek = { weekStart: string; expenses: Expense[]; payments: Payment[]; items: FeedItem[]; summary: MemberSummary[] }
 
-function itemDate(item: FeedItem): string {
-  return item.kind === 'expense' ? item.entry.date : item.payment.date
+function record(item: FeedItem): Expense | Payment {
+  return item.kind === 'expense' ? item.expense : item.payment
 }
 
-function itemCreatedAt(item: FeedItem): string {
-  return item.kind === 'expense' ? item.entry.createdAt : item.payment.createdAt
-}
-
-function mergeItems(entries: readonly Entry[], payments: readonly Payment[]): FeedItem[] {
+function mergeItems(expenses: readonly Expense[], payments: readonly Payment[]): FeedItem[] {
   return [
-    ...entries.map((entry): FeedItem => ({ kind: 'expense', entry })),
+    ...expenses.map((expense): FeedItem => ({ kind: 'expense', expense })),
     ...payments.map((payment): FeedItem => ({ kind: 'payment', payment })),
-  ].toSorted((first, second) => itemDate(second).localeCompare(itemDate(first)) || itemCreatedAt(second).localeCompare(itemCreatedAt(first)))
+  ].toSorted((first, second) => record(second).date.localeCompare(record(first).date) || record(second).created.localeCompare(record(first).created))
 }
 
-export function groupByWeek(entries: readonly Entry[], payments: readonly Payment[]): FeedWeek[] {
-  const weekStarts = new Set([...entries, ...payments].map((record) => getWeekStart(record.date)))
+export function groupByWeek(expenses: readonly Expense[], payments: readonly Payment[], order: MemberOrder): FeedWeek[] {
+  const weekStarts = new Set([...expenses, ...payments].map((item) => getWeekStart(item.date)))
   return [...weekStarts]
     .toSorted((first, second) => second.localeCompare(first))
     .map((weekStart) => {
-      const weekEntries = entries.filter((entry) => getWeekStart(entry.date) === weekStart)
+      const weekExpenses = expenses.filter((expense) => getWeekStart(expense.date) === weekStart)
       const weekPayments = payments.filter((payment) => getWeekStart(payment.date) === weekStart)
-      return { weekStart, entries: weekEntries, payments: weekPayments, items: mergeItems(weekEntries, weekPayments) }
+      return {
+        weekStart,
+        expenses: weekExpenses,
+        payments: weekPayments,
+        items: mergeItems(weekExpenses, weekPayments),
+        summary: summarizeWeek(weekExpenses, weekPayments, order),
+      }
     })
 }

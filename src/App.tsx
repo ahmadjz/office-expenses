@@ -1,62 +1,66 @@
-import { Plus, Wallet } from 'lucide-react'
+import { CircleAlert, RotateCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { AddEntrySheet } from './components/AddEntrySheet'
-import { AddPaymentSheet, type PaymentDraft } from './components/AddPaymentSheet'
-import { WeekGroup } from './components/WeekGroup'
-import { entries } from './lib/entries'
-import { groupByWeek } from './lib/feed'
-import { payments } from './lib/payments'
+import { AppHeader } from './components/AppHeader'
+import { FeedView } from './components/FeedView'
+import { LoginView } from './components/LoginView'
+import { MembersView } from './components/MembersView'
+import { secondaryButtonClass } from './components/ui'
+import { useAuth } from './hooks/useAuth'
+import { useLedger } from './hooks/useLedger'
+import { buildRoster } from './lib/roster'
+import type { Member } from './lib/schema'
 
 export default function App() {
-  const [isEntrySheetOpen, setIsEntrySheetOpen] = useState(false)
-  const [paymentDraft, setPaymentDraft] = useState<PaymentDraft | null>(null)
-  const weeks = useMemo(() => groupByWeek(entries, payments), [])
+  const auth = useAuth()
+  if (auth.status === 'checking') return null
+  if (auth.status === 'signed-out') return <LoginView />
+  return <SignedInApp key={auth.member.id} member={auth.member} />
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true" aria-label="جارٍ التحميل">
+      {[0, 1].map((index) => (
+        <div key={index} className="space-y-3 motion-safe:animate-pulse">
+          <div className="h-8 w-2/3 rounded-xl bg-[var(--color-surface)]" />
+          <div className="h-40 rounded-2xl bg-[var(--color-surface)]" />
+          <div className="h-24 rounded-2xl bg-[var(--color-surface)]" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function SignedInApp({ member }: { member: Member }) {
+  const { state, reload } = useLedger()
+  const [view, setView] = useState<'feed' | 'members'>('feed')
+  const ledger = state.status === 'ready' ? state.ledger : null
+  const roster = useMemo(() => buildRoster(ledger?.members ?? []), [ledger])
+  const onChanged = () => void reload()
+
   return (
     <main className="mx-auto min-h-dvh max-w-3xl px-4 pb-28 pt-8">
-      <header className="mb-8">
-        <p className="text-base font-semibold text-[var(--color-secondary)]">سجل مشترك</p>
-        <h1 className="font-heading text-4xl font-bold text-[var(--color-foreground)]">مصاريف المكتب</h1>
-        <p className="mt-2 text-base leading-7 text-[var(--color-muted)]">تابع المشتريات والحصص والتسديدات أسبوعًا بأسبوع.</p>
-      </header>
-
-      {weeks.length === 0 ? (
-        <section className="rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center">
-          <h2 className="font-heading text-2xl font-bold text-[var(--color-foreground)]">لا توجد مصروفات بعد</h2>
-          <p className="mt-2 text-base leading-7 text-[var(--color-muted)]">أضف أول مصروف ليظهر هنا.</p>
-        </section>
-      ) : (
-        <div className="space-y-10">
-          {weeks.map((week) => (
-            <WeekGroup
-              key={week.weekStart}
-              week={week}
-              onRecordSettlement={(transfer, date) => setPaymentDraft({ ...transfer, date })}
-            />
-          ))}
-        </div>
+      <AppHeader member={member} view={view} onViewChange={setView} />
+      {ledger && ledger.invalidCount > 0 && (
+        <p role="alert" className="mb-6 flex items-center gap-2 rounded-xl border border-[var(--color-negative)] p-3 text-sm text-[var(--color-negative)]">
+          <CircleAlert aria-hidden="true" size={18} />تعذّر عرض {ledger.invalidCount} من السجلات لأنها غير صالحة. أبلغ المسؤول.
+        </p>
       )}
-
-      <div className="fixed inset-x-0 bottom-0 border-t border-[var(--color-border)] bg-[var(--color-background)]/95 p-3 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-3xl gap-3">
-          <button
-            type="button"
-            onClick={() => setIsEntrySheetOpen(true)}
-            className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-base font-bold text-[var(--color-on-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-secondary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)]"
-          >
-            <Plus aria-hidden="true" size={20} />إضافة مصروف
-          </button>
-          <button
-            type="button"
-            onClick={() => setPaymentDraft({})}
-            className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-base font-bold text-[var(--color-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--color-secondary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)]"
-          >
-            <Wallet aria-hidden="true" size={20} />تسجيل دفعة
-          </button>
-        </div>
-      </div>
-
-      <AddEntrySheet isOpen={isEntrySheetOpen} onClose={() => setIsEntrySheetOpen(false)} />
-      {paymentDraft && <AddPaymentSheet draft={paymentDraft} onClose={() => setPaymentDraft(null)} />}
+      {state.status === 'ready' && state.isStale && (
+        <p role="alert" className="mb-6 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-negative)] p-3 text-sm text-[var(--color-negative)]">
+          <span className="flex items-center gap-2"><CircleAlert aria-hidden="true" size={18} />تعذّر تحديث البيانات، وقد لا يكون المعروض آخر ما سُجّل.</span>
+          <button type="button" onClick={onChanged} className={secondaryButtonClass}><RotateCw aria-hidden="true" size={18} />تحديث</button>
+        </p>
+      )}
+      {state.status === 'loading' && <LoadingSkeleton />}
+      {state.status === 'error' && (
+        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center">
+          <p className="text-base text-[var(--color-foreground)]">تعذّر تحميل البيانات</p>
+          <button type="button" onClick={onChanged} className={`${secondaryButtonClass} mt-4`}><RotateCw aria-hidden="true" size={18} />إعادة المحاولة</button>
+        </section>
+      )}
+      {ledger && view === 'feed' && <FeedView ledger={ledger} roster={roster} member={member} onChanged={onChanged} />}
+      {ledger && view === 'members' && member.isAdmin && <MembersView roster={roster} signedInId={member.id} onChanged={onChanged} />}
     </main>
   )
 }

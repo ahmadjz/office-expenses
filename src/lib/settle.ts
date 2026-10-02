@@ -1,26 +1,22 @@
-import { MEMBERS, type MemberId } from '../data/members'
+import type { MemberId } from './schema'
+import { byPosition, type MemberOrder } from './split'
 import type { MemberSummary } from './summary'
 
 export type Transfer = { from: MemberId; to: MemberId; amount: number }
 
 type Balance = { id: MemberId; remaining: number }
 
-const canonicalIndex = (id: MemberId) => MEMBERS.findIndex((member) => member.id === id)
-
-function largestFirst(first: Balance, second: Balance): number {
-  return second.remaining - first.remaining || canonicalIndex(first.id) - canonicalIndex(second.id)
-}
-
-function balances(summaries: readonly MemberSummary[], sign: 1 | -1): Balance[] {
+function balances(summaries: readonly MemberSummary[], sign: 1 | -1, order: MemberOrder): Balance[] {
+  const compareIds = byPosition(order)
   return summaries
     .filter((summary) => summary.net * sign > 0)
     .map((summary) => ({ id: summary.id, remaining: summary.net * sign }))
-    .toSorted(largestFirst)
+    .toSorted((first, second) => second.remaining - first.remaining || compareIds(first.id, second.id))
 }
 
-export function suggestSettlements(summaries: readonly MemberSummary[]): Transfer[] {
-  const debtors = balances(summaries, -1)
-  const creditors = balances(summaries, 1)
+export function suggestSettlements(summaries: readonly MemberSummary[], order: MemberOrder): Transfer[] {
+  const debtors = balances(summaries, -1, order)
+  const creditors = balances(summaries, 1, order)
   const transfers: Transfer[] = []
   let debtorIndex = 0
   let creditorIndex = 0

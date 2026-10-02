@@ -1,38 +1,49 @@
-name: Deploy GitHub Pages
+name: Deploy to VPS
 
 on:
   push:
     branches: [main]
-  workflow_call:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: deploy
   cancel-in-progress: false
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm test
+      - run: npm run test:pb
       - run: npm run build
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Rsync hooks, migrations, then the site
+        env:
+          RSYNC_RSH: ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes
+          TARGET: deploy@195.35.25.101
+        run: |
+          rsync -a --delete pocketbase/pb_hooks/ "$TARGET:pb_hooks/"
+          changed=$(rsync -a --delete --itemize-changes pocketbase/pb_migrations/ "$TARGET:pb_migrations/")
+          if [ -n "$changed" ]; then
+            echo "$changed"
+            sleep 15
+            for attempt in $(seq 1 30); do
+              curl -sf https://office.ahmadjz.tech/api/health > /dev/null && break
+              [ "$attempt" = 30 ] && { echo "PocketBase did not come back after the migration restart"; exit 1; }
+              sleep 2
+            done
+          fi
+          rsync -a --delete dist/ "$TARGET:web/"

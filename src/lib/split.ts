@@ -1,9 +1,15 @@
-import { MEMBERS, type MemberId } from '../data/members'
+import type { MemberId } from './schema'
 
-export function splitAmount(amount: number, sharers: readonly MemberId[]): Map<MemberId, number> {
+export type MemberOrder = ReadonlyMap<MemberId, number>
+
+export function byPosition(order: MemberOrder) {
+  return (first: MemberId, second: MemberId): number =>
+    (order.get(first) ?? Number.MAX_SAFE_INTEGER) - (order.get(second) ?? Number.MAX_SAFE_INTEGER) || first.localeCompare(second)
+}
+
+export function splitAmount(amount: number, sharers: readonly MemberId[], order: MemberOrder): Map<MemberId, number> {
   const baseShare = Math.floor(amount / sharers.length)
   const remainder = amount - baseShare * sharers.length
-  const selectedIds = new Set(sharers)
-  const orderedSharers = MEMBERS.filter((member) => selectedIds.has(member.id)).map(({ id }) => id)
+  const orderedSharers = [...new Set(sharers)].toSorted(byPosition(order))
   return new Map(orderedSharers.map((id, index) => [id, baseShare + (index < remainder ? 1 : 0)]))
 }

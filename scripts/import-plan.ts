@@ -1,12 +1,12 @@
-import type { Entry, Payment } from '../src/lib/schema'
+import type { LegacyEntry, LegacyPayment } from './legacy-schema'
 
 export type ImportRow =
   | { collection: 'expenses'; legacyId: string; createdAt: string; body: { date: string; payer: string; item: string; amount: number; sharers: string[]; createdBy: string } }
   | { collection: 'payments'; legacyId: string; createdAt: string; body: { date: string; from: string; to: string; amount: number; createdBy: string } }
 
 export function buildImportPlan(
-  entries: readonly Entry[],
-  payments: readonly Payment[],
+  entries: readonly LegacyEntry[],
+  payments: readonly LegacyPayment[],
   memberIdByUsername: ReadonlyMap<string, string>,
   createdByUsername: string,
 ): ImportRow[] {

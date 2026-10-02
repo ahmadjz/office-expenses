@@ -1,11 +1,12 @@
 import { ArrowLeft, Check } from 'lucide-react'
-import { memberName } from '../data/members'
 import { formatAmount } from '../lib/format'
+import type { Roster } from '../lib/roster'
 import type { Transfer } from '../lib/settle'
+import { focusRing } from './ui'
 
-type SettleSuggestionsProps = { headingId: string; transfers: readonly Transfer[]; onRecord: (transfer: Transfer) => void }
+type SettleSuggestionsProps = { headingId: string; transfers: readonly Transfer[]; roster: Roster; onRecord: (transfer: Transfer) => void }
 
-export function SettleSuggestions({ headingId, transfers, onRecord }: SettleSuggestionsProps) {
+export function SettleSuggestions({ headingId, transfers, roster, onRecord }: SettleSuggestionsProps) {
   if (transfers.length === 0) {
     return (
       <p className="flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-base text-[var(--color-positive)]">
@@ -22,12 +23,12 @@ export function SettleSuggestions({ headingId, transfers, onRecord }: SettleSugg
             <button
               type="button"
               onClick={() => onRecord(transfer)}
-              className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] px-3 text-start text-base text-[var(--color-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--color-secondary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)]"
+              className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] px-3 text-start text-base text-[var(--color-foreground)] ${focusRing}`}
             >
               <span className="flex items-center gap-2">
-                {memberName(transfer.from)}
+                {roster.name(transfer.from)}
                 <ArrowLeft aria-hidden="true" size={16} className="shrink-0 text-[var(--color-muted)]" />
-                {memberName(transfer.to)}
+                {roster.name(transfer.to)}
               </span>
               <span className="flex items-center gap-3">
                 <span className="tabular-nums font-semibold">{formatAmount(transfer.amount)}</span>
