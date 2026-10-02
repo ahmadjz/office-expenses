@@ -131,7 +131,24 @@ const run = async () => {
 
   const newPassword = 'reset-pass-456'
   expectStatus('admin resets a password', await call(admin, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, { password: newPassword, passwordConfirm: newPassword }), 200)
-  expectStatus('reset password works', await login('members', 'abu-obaida', newPassword), 200)
+  const resetLogin = await login('members', 'abu-obaida', newPassword)
+  expectStatus('reset password works', resetLogin, 200)
+  check('a new member must change their password', added.body?.mustChangePassword === true, added.body)
+  check('an admin reset flags the password for change', resetLogin.body?.record?.mustChangePassword === true, resetLogin.body)
+
+  const obaida = resetLogin.body.token
+  const ownPassword = 'my-own-pass-789'
+  const selfChange = { oldPassword: newPassword, password: ownPassword, passwordConfirm: ownPassword }
+  expectStatus('member cannot change own password without the current one', await call(obaida, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, { password: ownPassword, passwordConfirm: ownPassword }), 400)
+  expectStatus('member cannot rename themselves while changing password', await call(obaida, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, { ...selfChange, name: 'x' }), 404)
+  expectStatus('member cannot clear the flag without changing password', await call(obaida, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, { mustChangePassword: false }), 404)
+  expectStatus('member cannot change another member password', await call(obaida, 'PATCH', `/collections/members/records/${id.ahmad}`, { oldPassword: PASSWORD, password: ownPassword, passwordConfirm: ownPassword }), 404)
+  expectStatus('admin cannot change own password with a wrong current one', await call(admin, 'PATCH', `/collections/members/records/${id.ahmad}`, { oldPassword: 'wrong', password: ownPassword, passwordConfirm: ownPassword }), 400)
+  expectStatus('admin cannot change own password without the current one', await call(admin, 'PATCH', `/collections/members/records/${id.ahmad}`, { password: ownPassword, passwordConfirm: ownPassword }), 400)
+  expectStatus('member changes own password',await call(obaida, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, selfChange), 200)
+  const ownLogin = await login('members', 'abu-obaida', ownPassword)
+  expectStatus('own new password works', ownLogin, 200)
+  check('changing own password clears the flag', ownLogin.body?.record?.mustChangePassword === false, ownLogin.body)
 
   expectStatus('admin deactivates a member', await call(admin, 'PATCH', `/collections/members/records/${id.kasem}`, { active: false }), 200)
   check('deactivated member cannot log in', (await login('members', 'kasem', PASSWORD)).status >= 400, null)

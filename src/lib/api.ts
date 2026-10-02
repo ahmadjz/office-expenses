@@ -6,6 +6,7 @@ import {
   memberSchema,
   paymentSchema,
   type Expense,
+  type ChangePasswordInput,
   type ExpenseInput,
   type Member,
   type MemberId,
@@ -117,12 +118,20 @@ export async function resetPassword(id: MemberId, password: string): Promise<voi
   await pb.collection('members').update(id, { password, passwordConfirm: password })
 }
 
+export async function changeOwnPassword(input: ChangePasswordInput): Promise<void> {
+  const record = pb.authStore.record
+  if (!record) throw new Error('not signed in')
+  await pb.collection('members').update(record.id, input)
+  await login(String(record.username), input.password)
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof ClientResponseError) {
     if (error.status === 0) return 'تعذّر الاتصال بالخادم. تحقق من الإنترنت وحاول مجددًا.'
     if (error.status === 404 || error.status === 403) return 'ليست لديك صلاحية لهذا الإجراء.'
     const fieldErrors = Object.values(error.response?.data ?? {}) as { code?: string }[]
     if (fieldErrors.some((field) => field.code === 'validation_not_unique')) return 'اسم المستخدم مستخدم من قبل.'
+    if (fieldErrors.some((field) => field.code === 'validation_invalid_old_password')) return 'كلمة المرور الحالية غير صحيحة.'
     if (typeof error.response?.message === 'string' && /[؀-ۿ]/.test(error.response.message)) return error.response.message
   }
   return 'حدث خطأ غير متوقع. حاول مجددًا.'

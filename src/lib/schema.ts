@@ -20,6 +20,7 @@ export const memberSchema = z.object({
   position: z.number().int().positive(),
   active: z.boolean(),
   isAdmin: z.boolean(),
+  mustChangePassword: z.boolean(),
 })
 
 export const expenseSchema = z.object({
@@ -72,6 +73,14 @@ export const newMemberInputSchema = z.object({
 export const renameMemberInputSchema = z.object({ name: memberNameSchema })
 export const passwordInputSchema = z.object({ password: passwordSchema })
 
+export const changePasswordInputSchema = z.object({
+  oldPassword: z.string().min(1, 'اكتب كلمة المرور الحالية'),
+  password: passwordSchema,
+  passwordConfirm: z.string(),
+})
+  .refine((input) => input.password === input.passwordConfirm, { message: 'كلمتا المرور غير متطابقتين', path: ['passwordConfirm'] })
+  .refine((input) => input.password !== input.oldPassword, { message: 'اختر كلمة مرور مختلفة عن الحالية', path: ['password'] })
+
 export type MemberId = string
 export type Member = z.infer<typeof memberSchema>
 export type Expense = z.infer<typeof expenseSchema>
@@ -79,3 +88,4 @@ export type Payment = z.infer<typeof paymentSchema>
 export type ExpenseInput = z.infer<typeof expenseInputSchema>
 export type PaymentInput = z.infer<typeof paymentInputSchema>
 export type NewMemberInput = z.infer<typeof newMemberInputSchema>
+export type ChangePasswordInput = z.infer<typeof changePasswordInputSchema>

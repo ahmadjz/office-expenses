@@ -58,7 +58,9 @@ the per-person split of every historical entry.
 - **Remove = deactivate.** A member is never deleted — past records reference them. Setting
   `active = false` blocks their login, hides them from the payer/sharer/recipient chips, and leaves
   every historical record and summary row intact. Reactivating reverses it.
-- **Password reset:** admin-only. Members cannot change their own password in v1.
+- **Passwords:** the admin sets the first one and can reset anyone else's. Every member changes
+  their own from **حسابي**, which always requires the current password. An admin-set password is
+  flagged (`mustChangePassword`), and the app asks the member to replace it after they log in (§5.1).
 
 ---
 
@@ -78,6 +80,7 @@ migration and the live schema disagree.
 | `position` | number | Integer, unique, ≥ 1. Immutable after create (§2). |
 | `active` | bool | Defaults `true`. |
 | `isAdmin` | bool | Defaults `false`. Only `ahmad` initially. |
+| `mustChangePassword` | bool | Set by a hook: `true` on create and whenever someone else sets the password, `false` when the member sets their own. Clients can't write it. |
 
 Password auth uses `username` as the identity field. The auth rule is `active = true`, so a
 deactivated member's existing session also stops working.
@@ -187,6 +190,11 @@ The app refreshes the session on load, whenever the tab becomes visible, and eve
 deactivated member's refresh fails, which signs them out. Without this, their open tab would keep
 showing stale data: the API already rejects them, but realtime sends nothing to a member who can no
 longer read.
+
+**Change-password prompt.** While `mustChangePassword` is set, every login opens a sheet titled
+**غيّر كلمة المرور** with the §5.8 form. **لاحقًا** dismisses it for that session, and the sheet says
+the password can be changed any time from **حسابي**. The prompt keeps returning on each login until
+they change it, since a shared or admin-known password lets anyone log in under their name.
 
 ### 5.2 Feed — grouped by week
 
@@ -319,14 +327,21 @@ undo — PocketBase's daily backups (§8) are the safety net.
 
 Non-admins never see these controls, and the API rejects the calls regardless (§6).
 
-### 5.8 Members screen — admin only
+### 5.8 Account — every member
+
+**حسابي** in the header: name and username (read-only), and a change-password form with the current
+password, the new one (≥ 8), and a confirmation. Changing it invalidates the session token, so the app
+logs in again with the new password, and the member stays signed in.
+
+### 5.9 Members screen — admin only
 
 Reached from the header menu (**الأعضاء**). A list in `position` order: name, username, status.
 
 - **إضافة عضو** — name, username, initial password (≥ 8 chars). `position` is assigned server-side.
 - **تعديل** — name only. Username and `position` are fixed.
 - **تعطيل / تفعيل** — toggles `active`. The admin cannot deactivate themselves.
-- **إعادة تعيين كلمة المرور** — sets a new password.
+- **إعادة تعيين كلمة المرور** — sets a new password for someone else. Not offered on the admin's
+  own row; they use **حسابي** like everyone else.
 
 ---
 
@@ -356,7 +371,7 @@ The browser talks to PocketBase directly through the official JS SDK, same origi
 
 | collection | list / view | create | update | delete |
 |---|---|---|---|---|
-| `members` | signed in | admin | admin | nobody (§2) |
+| `members` | signed in | admin | admin, or self changing only the password | nobody (§2) |
 | `expenses` | signed in | signed in, `@request.body.createdBy = @request.auth.id` | admin | admin |
 | `payments` | signed in | same as expenses | admin | admin |
 

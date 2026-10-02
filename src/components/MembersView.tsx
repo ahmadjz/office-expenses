@@ -32,7 +32,9 @@ export function MembersView({ roster, signedInId, onChanged }: MembersViewProps)
             <p className="text-sm text-[var(--color-muted)]" dir="ltr">{member.username}</p>
             <div className="mt-2 flex flex-wrap gap-1">
               <button type="button" onClick={() => setForm({ kind: 'rename', member })} className={actionClass} aria-label={`تعديل اسم ${member.name}`}><Pencil aria-hidden="true" size={16} />تعديل</button>
-              <button type="button" onClick={() => setForm({ kind: 'password', member })} className={actionClass} aria-label={`إعادة تعيين كلمة مرور ${member.name}`}><KeyRound aria-hidden="true" size={16} />إعادة تعيين كلمة المرور</button>
+              {member.id !== signedInId && (
+                <button type="button" onClick={() => setForm({ kind: 'password', member })} className={actionClass} aria-label={`إعادة تعيين كلمة مرور ${member.name}`}><KeyRound aria-hidden="true" size={16} />إعادة تعيين كلمة المرور</button>
+              )}
               {member.id !== signedInId && (
                 <button type="button" onClick={() => setToggling(member)} className={`${actionClass} ${member.active ? 'text-[var(--color-negative)]' : ''}`} aria-label={`${member.active ? 'تعطيل' : 'تفعيل'} ${member.name}`}>
                   {member.active ? 'تعطيل' : 'تفعيل'}
