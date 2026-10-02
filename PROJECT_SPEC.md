@@ -1,11 +1,12 @@
 # مصاريف المكتب — Office Expenses
 
-A static Arabic (RTL) web app for tracking shared office purchases, hosted on GitHub Pages.
-Data lives as JSON files in this repo. New entries arrive via a **prefilled GitHub issue**,
-which a GitHub Action validates, commits, and then rebuilds + redeploys the site.
+An Arabic (RTL) web app for tracking shared office purchases. A static React frontend talks to a
+**PocketBase** backend; both run on the VPS behind Caddy at `https://office.ahmadjz.tech`.
+Every member has their own login. Viewing requires one; adding records needs one; editing,
+deleting, and managing members is admin-only.
 
-**Status:** built and deployed. Purchases, per-person shares, weekly summaries, and paybacks
-with settle-up suggestions are all live.
+**Status:** migrating from the GitHub-issue + JSON-files design (purchases, shares, weekly
+summaries, paybacks, settle-up are all live there) to PocketBase. §14 lists what moves.
 
 ---
 
@@ -27,101 +28,100 @@ Debts also get **paid back**, and that has to be recorded or the ledger only eve
 
 ---
 
-## 2. Members (static, hardcoded)
+## 2. Members
 
-Seven fixed members. Never entered free-form — always selected from this list.
-Stable `id`s are what get stored in JSON; the Arabic `name` is display-only, so renaming
-someone later never rewrites historical data.
+Members are rows in the `members` auth collection (§3.1) — each one is both a person in the ledger
+and a login. They are always selected from the list, never typed free-form. Records store the
+member's PocketBase record id; the Arabic `name` is display-only, so renaming someone never rewrites
+history.
 
-| id | name |
-|---|---|
-| `ahmad` | أحمد |
-| `abu-obaida` | أبو عبيدة |
-| `kasem` | كاسم |
-| `abu-khaled` | أبو خالد |
-| `abu-tareq` | أبو طارق |
-| `abu-adnan` | أبو عدنان |
-| `abu-mohsen` | أبو محسن |
+The initial seven, in canonical order:
 
-Order in this table is **canonical** and load-bearing — it's the deterministic tiebreak order
-for remainder distribution (§4).
+| position | username | name |
+|---|---|---|
+| 1 | `ahmad` | أحمد |
+| 2 | `abu-obaida` | أبو عبيدة |
+| 3 | `kasem` | كاسم |
+| 4 | `abu-khaled` | أبو خالد |
+| 5 | `abu-tareq` | أبو طارق |
+| 6 | `abu-adnan` | أبو عدنان |
+| 7 | `abu-mohsen` | أبو محسن |
+
+**`position` is canonical and load-bearing** — it is the deterministic tiebreak order for remainder
+distribution (§4). It is set once on create (`max + 1`) and never changed: renumbering would change
+the per-person split of every historical entry.
+
+### Adding and removing people
+
+- **Add:** the admin creates the member with a name, username, and initial password, and sends the
+  credentials to them directly.
+- **Remove = deactivate.** A member is never deleted — past records reference them. Setting
+  `active = false` blocks their login, hides them from the payer/sharer/recipient chips, and leaves
+  every historical record and summary row intact. Reactivating reverses it.
+- **Password reset:** admin-only. Members cannot change their own password in v1.
 
 ---
 
 ## 3. Data model
 
-### 3.1 One file per entry
+Three PocketBase collections. The schema lives in git as PocketBase JS migrations
+(`pocketbase/pb_migrations/`) — never edit collections by hand in the dashboard, or the next
+migration and the live schema disagree.
 
-`data/entries/<id>.json` — one JSON file per entry. One file per entry (not one big array)
-means hand-editing and git history stay clean, and two entries can never collide.
-
-```json
-{
-  "id": "2026-08-03-a3f9c1",
-  "date": "2026-08-03",
-  "payer": "ahmad",
-  "item": "نص كيلو جبنة",
-  "amount": 100,
-  "sharers": ["ahmad", "abu-obaida", "kasem", "abu-adnan"],
-  "createdAt": "2026-08-03T09:12:00.000Z",
-  "issue": 12
-}
-```
+### 3.1 `members` (auth collection)
 
 | field | type | rules |
 |---|---|---|
-| `id` | string | `<date>-<6 hex>`. Unique. Also the filename. |
-| `date` | string | `YYYY-MM-DD`. The purchase date. Not more than 1 day in the future. |
-| `payer` | member id | Must exist in §2. |
-| `item` | string | Trimmed, 1–80 chars. |
-| `amount` | integer | `> 0`, `<= 100000000`. Total cost in SYP. Never a float. |
-| `sharers` | member id[] | 1–7 entries, unique, all must exist in §2. |
-| `createdAt` | ISO 8601 | Set by the Action, not the client. |
-| `issue` | integer | Source issue number, for traceability. |
+| `username` | text | Required, unique, `^[a-z0-9-]{2,30}$`. The login identity. |
+| `email` | email | Optional. Not used for login. |
+| `name` | text | Required, trimmed, 1–40 chars. Arabic display name. |
+| `position` | number | Integer, unique, ≥ 1. Immutable after create (§2). |
+| `active` | bool | Defaults `true`. |
+| `isAdmin` | bool | Defaults `false`. Only `ahmad` initially. |
+
+Password auth uses `username` as the identity field. The auth rule is `active = true`, so a
+deactivated member's existing session also stops working.
+
+### 3.2 `expenses`
+
+| field | type | rules |
+|---|---|---|
+| `date` | text | `YYYY-MM-DD`. The purchase date. Not more than 1 day in the future. |
+| `payer` | relation → members | Required, single. |
+| `item` | text | Trimmed, 1–80 chars. |
+| `amount` | number | Integer only, `> 0`, `<= 100000000`. Total cost in SYP. Never a float. |
+| `sharers` | relation → members | Required, multiple, ≥ 1, unique. |
+| `createdBy` | relation → members | Must equal the authenticated member on create. |
+| `created` / `updated` | autodate | Set by PocketBase. |
 
 **`payer` need not be in `sharers`.** Someone can buy something they don't eat.
-In the canonical example أحمد *is* in `sharers`, but that's incidental.
 
-### 3.2 One file per payback
+`date` is plain text, not a PocketBase `date` field: a date field carries a time and a timezone, and
+a purchase made on Saturday evening in Damascus must never slide into Friday's week.
 
-`data/payments/<id>.json` — a payback (تسديد) from one member to another. Same one-file-per-record
-rule, same id format, a **separate directory** so the two record types never need a discriminator
-field on disk and each keeps a strict schema.
+### 3.3 `payments`
 
-```json
-{
-  "id": "2026-08-05-b71d20",
-  "date": "2026-08-05",
-  "from": "abu-obaida",
-  "to": "ahmad",
-  "amount": 25,
-  "createdAt": "2026-08-05T10:00:00.000Z",
-  "issue": 17
-}
-```
+A payback (تسديد) from one member to another.
 
 | field | type | rules |
 |---|---|---|
-| `from` | member id | Who handed over the money. |
-| `to` | member id | Who received it. **Must differ from `from`.** |
-| `amount` | integer | Same rules as an entry's `amount`. |
-
-`date`, `id`, `createdAt`, `issue` follow §3.1 exactly.
+| `date` | text | Same as §3.2. |
+| `from` | relation → members | Who handed over the money. |
+| `to` | relation → members | Who received it. **Must differ from `from`.** |
+| `amount` | number | Same rules as an expense's `amount`. |
+| `createdBy` | relation → members | Same as §3.2. |
 
 **A payback is not validated against what's actually owed.** Over- and under-payment are both
-recordable — the ledger's job is to record what happened, not to referee it. A 30 payback against a
-25 debt simply leaves the payer 5 in credit.
+recordable — the ledger records what happened, it doesn't referee it.
 
-### 3.3 Build-time baking
+### 3.4 Validation — two layers
 
-The app does **not** fetch data at runtime. Vite imports every entry at build time:
+| layer | enforces |
+|---|---|
+| Zod (`src/lib/schema.ts`) | Every API response is parsed into domain types before the app uses it; every form is validated before it is sent. |
+| PocketBase | Field options (integer-only, min/max, pattern, required), API rules (§6), and `pb_hooks/validate.pb.js` for what field options can't express: date not beyond tomorrow, `from ≠ to`, payer/sharers/recipient must be **active** members on create. |
 
-```ts
-import.meta.glob('../../data/entries/*.json', { eager: true, import: 'default' })
-```
-
-Everything ships in the bundle. No API, no fetch, no loading state, no CORS. The site is
-literally a folder of static files. The consequence is stated plainly in §7.
+The server is the authority — the client checks exist for inline error messages, not for safety.
 
 ---
 
@@ -140,8 +140,8 @@ base      = floor(amount / n)
 remainder = amount - (base * n)
 ```
 
-The first `remainder` sharers — **ordered by the canonical member order in §2**, not by the
-order they were clicked — each get `base + 1`. Everyone else gets `base`.
+The first `remainder` sharers — **ordered by member `position` (§2)**, not by the order they were
+clicked — each get `base + 1`. Everyone else gets `base`.
 
 | input | shares | sum |
 |---|---|---|
@@ -150,8 +150,8 @@ order they were clicked — each get `base + 1`. Everyone else gets `base`.
 | 60 ÷ 7 | 9 · 9 · 9 · 9 · 8 · 8 · 8 | 60 ✓ |
 
 **Invariant: the shares always sum to exactly `amount`.** This must have a unit test.
-Sorting by canonical order (rather than click order) makes the result reproducible — the same
-entry always yields the same per-person numbers.
+Sorting by `position` makes the result reproducible — the same entry always yields the same
+per-person numbers. Splits are computed in the client, never stored.
 
 ### Display
 
@@ -165,25 +165,30 @@ Balances are a **pot**, not a web of pairwise debts: each member carries one num
 
 `suggestSettlements` turns those balances into the **fewest transfers that zero everyone out**:
 sort debtors and creditors by size, repeatedly match the largest of each, and move the smaller of
-the two amounts. Ties break on the §2 canonical order, so the same balances always produce the same
-suggestions.
+the two amounts. Ties break on `position`, so the same balances always produce the same suggestions.
 
 **Invariant: every net sums to zero, so the greedy match always terminates with nothing left over.**
-Both halves have unit tests — that the nets sum to zero, and that applying every suggested transfer
-leaves all balances at zero.
+Both halves have unit tests.
 
 ---
 
 ## 5. Screens
 
-Single page. No router. One bottom sheet for the form.
+Single page. No router. View state (`login` | `feed` | `members`) lives in `useState`.
 
-### 5.1 Feed — grouped by week
+### 5.1 Login
+
+Username + password, Arabic labels, one primary button **دخول**. Wrong credentials and a
+deactivated account show the same message (`اسم المستخدم أو كلمة المرور غير صحيحة`) — don't reveal
+which usernames exist. The session persists in the PocketBase SDK's auth store; a header menu has
+**خروج**.
+
+### 5.2 Feed — grouped by week
 
 Weeks run **Saturday → Friday** (Levant work week). This is a single exported constant
 `WEEK_START_DAY = 6` (JS `getDay()` for Saturday) so it's a one-line change if wrong.
 
-Weeks are ordered newest-first; entries within a week are newest-first.
+Weeks are ordered newest-first; records within a week are newest-first.
 
 ```
 ┌──────────────────────────────────────────┐
@@ -193,7 +198,6 @@ Weeks are ordered newest-first; entries within a week are newest-first.
 │  │ الاسم      دفع    عليه  سدّد الصافي│  │
 │  │ أحمد     ٨٬٠٠٠  ٣٬١٠٠  −٤٠٠ +٤٬٥٠٠│  │
 │  │ أبو عبيدة    ٠  ٢٬٢٠٠  +٤٠٠ −١٬٨٠٠│  │
-│  │ كاسم     ٤٬٤٠٠  ٢٬٩٠٠     ٠ +١٬٥٠٠│  │
 │  │ …                                  │  │
 │  └────────────────────────────────────┘  │
 │  ┌────────────────────────────────────┐  │
@@ -204,20 +208,19 @@ Weeks are ordered newest-first; entries within a week are newest-first.
 │  ٥ آب   أبو عبيدة ← أحمد                 │
 │         تسديد ٤٠٠                        │
 │                                          │
-│  ٣ آب   أحمد — نص كيلو جبنة              │
+│  ٣ آب   أحمد — نص كيلو جبنة        ✎  🗑 │  ← admin only
 │         ١٠٠ ÷ ٤ =  ٢٥ للشخص              │
 │         أحمد · أبو عبيدة · كاسم · أبو عدنان│
-│                                          │
-│  ٢ آب   كاسم — خبز                       │
-│         ٦٠ ÷ ٦ = ١٠ للشخص                │
-│         …                                │
+│         سجّله: كاسم                      │
 └──────────────────────────────────────────┘
 ```
 
-Paybacks and purchases share one chronological list inside the week, newest first, `createdAt`
-breaking same-day ties.
+Paybacks and purchases share one chronological list inside the week, newest first, `created`
+breaking same-day ties. Each card shows **سجّله: <name>** from `createdBy`, so a wrong entry can be
+traced to whoever logged it.
 
-**Week summary table** — one row per member who appears in that week (paid, shared, or settled):
+**Week summary table** — one row per member who appears in that week (paid, shared, or settled),
+including deactivated members:
 
 - **دفع** — sum of `amount` for entries where they are `payer`
 - **عليه** — sum of their individual share across every entry in the week
@@ -225,181 +228,152 @@ breaking same-day ties.
 - **الصافي** — `دفع − عليه + سدّد`. Positive = the office owes them. Negative = they owe the office.
 
 Colour-code the net with green/red **plus** a `+`/`−` sign and an arrow icon — never colour
-alone (WCAG: don't encode meaning in colour only).
+alone.
 
-Table cells carry bare numbers with the currency stated once in a `<caption>`; repeating `ل.س` in
-every cell wrapped each figure onto two lines. Signed figures sit in a `dir="ltr"` span so the sign
-stays on the same side of the digits regardless of what neighbours it in the RTL flow.
+Table cells carry bare numbers with the currency stated once in a `<caption>`. Signed figures sit in
+a `dir="ltr"` span so the sign stays on the same side of the digits in the RTL flow.
 
 Under each table, **التسوية المقترحة** lists the minimal transfers (§4) for that week. Each row is a
 button that opens the payback sheet already filled in.
 
-### 5.2 The settlement window
+### 5.3 Archive
+
+The feed shows the **current week and the two before it** (`RECENT_WEEKS = 3`, one exported
+constant). Every older week folds into a collapsed **الأرشيف** section at the bottom, which expands
+in place to the same week cards, newest-first.
+
+**Exception: an older week that still has unsettled balances stays in the main feed**, marked
+`غير مسوّى`. Balances are per week, so archiving an unsettled week would hide a real debt with
+nothing anywhere else on screen to show it. A week counts as settled when every member's الصافي is 0.
+
+Archiving is display-only — nothing is moved or flagged in the database, and the app still fetches
+every record (a few hundred rows a year). If that stops being true, page the archive by `date`.
+
+### 5.4 The settlement window
 
 The summary is still **per week only** — there is no cross-week running balance. That makes *when* a
 payback is dated load-bearing: one dated outside the week of the debt it settles lands in a different
 table and never cancels it.
 
 So a suggestion rendered under week X prefills its date as `min(weekEnd(X), today)` — inside week X
-by construction, and never past the schema's "not beyond tomorrow" rule. Recording a suggested
-transfer therefore zeroes the week it came from.
+by construction, and never past the "not beyond tomorrow" rule. Recording a suggested transfer
+therefore zeroes the week it came from. A payback typed manually gets today's date; the admin can fix
+a wrong date by editing the record (§5.7).
 
-A payback typed manually gets today's date, which is only correct if it settles *this* week's debts.
-Fix by editing the date in the sheet before sending, or the JSON file afterwards.
+### 5.5 Add-expense sheet
 
-### 5.3 Add-entry sheet
-
-Bottom sheet, drag-to-dismiss, opened by the primary half of the sticky CTA pair at the bottom of
-the feed.
+Bottom sheet, drag-to-dismiss, opened by the primary half of the sticky CTA pair. Any signed-in
+member can use it.
 
 | field | control |
 |---|---|
-| من دفع؟ | 7 selectable chips, single-select |
+| من دفع؟ | chips for every **active** member, single-select, defaults to the signed-in member |
 | ماذا اشترى؟ | text input, visible label, 80 char limit |
 | المبلغ | numeric input, `inputMode="numeric"`, integer only, thousands separator on display |
 | التاريخ | date input, defaults to today |
-| من شارك؟ | 7 toggle chips, multi-select, plus a **الكل** toggle |
+| من شارك؟ | toggle chips for every active member, multi-select, plus a **الكل** toggle |
 
-**Live preview strip**, updating on every change:
+**Live preview strip**, updating on every change: `٤ أشخاص · ٢٥ ل.س للشخص`.
 
-```
-٤ أشخاص  ·  ٢٥ ل.س للشخص
-```
-
-Two actions:
-
-- **إرسال عبر GitHub** (primary) — opens the prefilled issue in a new tab (§6)
-- **نسخ** (secondary) — copies the payload to clipboard, so a member without a GitHub
-  account can WhatsApp it to whoever does
+One action: **حفظ**. It is disabled while the form is invalid (stating why) and while the request is
+in flight. On success the sheet closes and the record appears from the server response — never
+insert it before the server confirms. On failure the sheet stays open with the Arabic error and the
+draft intact.
 
 Validation is inline, on blur, with the error message directly under its field.
-The submit button is disabled until the form is valid, and states *why* it's disabled.
 
-### 5.4 Record-payback sheet
+### 5.6 Record-payback sheet
 
-Same chrome (`Sheet`), same two actions (`IssueActions`), opened either by the secondary
-**تسجيل دفعة** CTA or by tapping a suggested transfer.
+Same chrome (`Sheet`), opened by the secondary **تسجيل دفعة** CTA or by tapping a suggested transfer.
 
 | field | control |
 |---|---|
-| من دفع؟ | 7 selectable chips, single-select |
+| من دفع؟ | active-member chips, single-select |
 | لمن دفع؟ | chips, single-select, **excluding whoever is selected as payer** |
-| المبلغ | numeric input, `inputMode="numeric"`, integer only |
-| التاريخ | date input (§5.2 for what it defaults to) |
+| المبلغ | numeric input, integer only |
+| التاريخ | date input (§5.4 for what it defaults to) |
 
-Filtering the payer out of the recipient chips makes `from === to` unreachable through the UI —
-the schema still rejects it, because the issue path accepts hand-written JSON too. Picking a payer
-who is already the recipient clears the recipient rather than leaving an invalid pair selected.
+Filtering the payer out of the recipient chips makes `from === to` unreachable through the UI; the
+server still rejects it. Picking a payer who is already the recipient clears the recipient.
 
 The sheet mounts with its draft as initial state and unmounts on close, so each open starts from
 whatever prefill it was given.
 
-### 5.5 No edit, no delete
+### 5.7 Edit and delete — admin only
 
-Deliberately out of scope. A wrong record is fixed by editing `data/entries/<id>.json` or
-`data/payments/<id>.json` directly on github.com — the push rebuilds the site.
-Since one person enters all data, a UI for this would be pure cost.
+Admins see ✎ and 🗑 on every card. ✎ opens the same sheet (§5.5 / §5.6) prefilled with the record,
+saving with an update instead of a create. When editing, chips also include any **inactive** member
+already on the record, so editing an old entry never silently drops someone.
 
----
+🗑 asks for confirmation (`حذف هذا السجل؟`) naming the item and amount, then deletes. There is no
+undo — PocketBase's daily backups (§8) are the safety net.
 
-## 6. The write path
+Non-admins never see these controls, and the API rejects the calls regardless (§6).
 
-GitHub Pages is static and cannot write files. **Any** write to the repo needs a GitHub
-credential, and a static page has nowhere safe to keep one. So the credential is *the human*:
-whoever submits is already logged into GitHub, and their click is the authentication.
-No token exists anywhere in the app.
+### 5.8 Members screen — admin only
 
-```
-  phone: fill form
-        │
-        │  tap "إرسال عبر GitHub"
-        ▼
-  github.com/ahmadjz/office-expenses/issues/new
-        ?labels=entry&title=…&body=…       ← every field prefilled
-        │
-        │  tap "Submit new issue"
-        ▼
-  Action  on: issues.opened
-        │  ├─ author ∈ ALLOWLIST?            else: comment + close (not_planned)
-        │  ├─ parse ```json block from body
-        │  ├─ read `kind` → expense | payment
-        │  ├─ validate against that schema   else: comment the error + close
-        │  ├─ write data/{entries,payments}/<id>.json
-        │  ├─ commit
-        │  └─ comment ✅ with the breakdown + close
-        ▼
-  Deploy job → build → GitHub Pages          (~1–2 min total)
-```
+Reached from the header menu (**الأعضاء**). A list in `position` order: name, username, status.
 
-### Prefilled URL
-
-```
-https://github.com/ahmadjz/office-expenses/issues/new
-  ?labels=entry
-  &title=<urlencoded>إدخال: أحمد — نص كيلو جبنة — 100</>
-  &body=<urlencoded fenced ```json block</>
-```
-
-Plain `title` + `body` params, **not** an issue-form template — a fenced JSON block is far
-easier to parse reliably than form-field markdown, and prefilling a `.yml` issue form requires
-matching field ids that break whenever the template changes.
-
-### Routing expenses vs paybacks
-
-One workflow handles both. The JSON block carries a `kind` discriminator:
-
-```json
-{ "kind": "payment", "date": "2026-08-05", "from": "abu-obaida", "to": "ahmad", "amount": 25 }
-```
-
-**`kind` is stripped before validation and never stored** — the directory already says which
-type a file is, so putting it on disk would be a second source of truth that could disagree.
-
-**A missing `kind` means `expense`.** Every issue link built before this feature existed omits it,
-and those links live in people's WhatsApp history; defaulting keeps them working. An unrecognised
-`kind` is rejected rather than defaulted, so a typo fails loudly instead of silently booking a
-payback as a purchase.
-
-Routing by `kind` rather than by issue label is deliberate: the workflow already ignores labels
-(an unknown label in an `issues/new` URL is silently dropped, which would make label-based routing
-fail invisibly), and the label is not available to a hand-written submission relayed over WhatsApp.
-
-### Authorization
-
-`ALLOWLIST` is a checked-in array of GitHub usernames — currently just `["ahmadjz"]`.
-This matters because the repo is public, so *anyone* on GitHub can open an issue.
-Any issue from an author outside the allowlist is closed without touching the repo.
-
-### ⚠️ The one thing that will silently break
-
-A push made by a workflow using the default `GITHUB_TOKEN` **does not trigger other workflows.**
-So the commit from the entry workflow will *not* fire a separate `on: push` deploy workflow,
-and the site will never update — with no error anywhere.
-
-Fix: make `deploy.yml` a reusable workflow (`on: { push: { branches: [main] }, workflow_call: {} }`)
-and have `entry.yml` call it directly as a dependent job:
-
-```yaml
-deploy:
-  needs: commit
-  uses: ./.github/workflows/deploy.yml
-```
+- **إضافة عضو** — name, username, initial password (≥ 8 chars). `position` is assigned server-side.
+- **تعديل** — name only. Username and `position` are fixed.
+- **تعطيل / تفعيل** — toggles `active`. The admin cannot deactivate themselves.
+- **إعادة تعيين كلمة المرور** — sets a new password.
 
 ---
 
-## 7. Freshness — the accepted tradeoff
+## 6. Access and the write path
 
-An entry takes **~1–2 minutes** to appear: commit → build → Pages deploy.
+The browser talks to PocketBase directly through the official JS SDK, same origin
+(`https://office.ahmadjz.tech/api/*`), so there is no CORS configuration and no token in the build.
 
-This was chosen deliberately over an optimistic-UI + live-fetch design, in exchange for a much
-simpler app (no runtime fetch, no pending state, no reconciliation).
+```
+  phone: login (username + password)
+        │
+        ▼
+  PocketBase auth  ── authRule: active = true ──▶ JWT in SDK auth store
+        │
+        ▼
+  list expenses + payments + members   (rules: signed in)
+        │
+        ▼
+  create   (rules: signed in, createdBy = self, pb_hooks validation)
+  update / delete / manage members     (rules: isAdmin)
+        │
+        ▼
+  realtime subscription pushes the change to every open tab
+```
 
-The UI must be honest about it. After tapping submit, show a persistent note:
+### API rules
 
-> تم إرسال الإدخال. سيظهر على الموقع خلال دقيقة تقريبًا بعد اكتمال البناء.
+| collection | list / view | create | update | delete |
+|---|---|---|---|---|
+| `members` | signed in | admin | admin | nobody (§2) |
+| `expenses` | signed in | signed in, `@request.body.createdBy = @request.auth.id` | admin | admin |
+| `payments` | signed in | same as expenses | admin | admin |
 
-with a link to the Actions run. Do not fake the entry into the list — showing an entry that
-isn't really saved yet is worse than a one-minute wait.
+"Signed in" is `@request.auth.id != "" && @request.auth.active = true` — the `authRule` only gates new
+logins, so without the `active` check a deactivated member's existing session would keep working.
+"Admin" is signed in plus `@request.auth.isAdmin = true`. The `members` manage rule is also admin-only, which is what
+lets the admin set other members' passwords.
+
+**Admin-on-the-app is not the PocketBase superuser.** The superuser (the dashboard at `/_/`) is for
+infrastructure only — migrations, backups, emergencies. Day-to-day admin work happens in the app as
+the `ahmad` member.
+
+---
+
+## 7. Freshness
+
+Writes are visible immediately: the sheet waits for the server response, then the app refetches. The
+app also subscribes to PocketBase realtime on `expenses`, `payments`, and `members`, so other open
+tabs update without a reload.
+
+Loading and error states are real now:
+
+- First load shows a skeleton of the week cards, not a blank page.
+- A failed fetch shows `تعذّر تحميل البيانات` with a **إعادة المحاولة** button.
+- A record that fails Zod parsing is a bug, not user data — log it, skip that record, and show a
+  single banner. One bad row must not take down the whole feed.
 
 ---
 
@@ -407,18 +381,32 @@ isn't really saved yet is worse than a one-minute wait.
 
 | | |
 |---|---|
-| Repo | `ahmadjz/office-expenses` — **public** |
-| Site | `https://ahmadjz.github.io/office-expenses/` |
-| Vite `base` | `/office-expenses/` |
-| Cost | $0 |
+| Frontend | Static `dist/` served by Caddy from `/srv/office.ahmadjz.tech/web` |
+| Backend | PocketBase in Docker, `127.0.0.1:8090`, proxied at `/api/*` and `/_/*` |
+| Data | `/opt/pocketbase/pb_data` on the VPS — **not in git** |
+| Infra config | `ahmadjz/vps-infra` (Caddyfile, PocketBase compose, setup script) |
+| Vite `base` | `/` |
+| Backups | PocketBase scheduled backups, daily, kept 7 |
 
-Public is required: the free GitHub plan cannot serve Pages from a private repo.
-(Verified — all four existing Pages repos on this account are public.) The consequence is that
-member names and amounts are world-readable. Accepted: it's office snack money.
+### Deploy
 
-The free alternative, if this ever changes: private repo + Cloudflare Pages, which serves a
-public site from a private repo at no cost, and additionally restricts issue-opening to
-invited collaborators. That swap touches only the deploy workflow, not the app.
+`deploy.yml` on push to `main`: test → build → rsync three folders as the `deploy` user, whose key is
+locked to `rrsync /srv/office.ahmadjz.tech`:
+
+```
+/srv/office.ahmadjz.tech/
+├── web/              ← dist/
+├── pb_migrations/    ← pocketbase/pb_migrations/   (mounted read-only into PocketBase)
+└── pb_hooks/         ← pocketbase/pb_hooks/        (mounted read-only into PocketBase)
+```
+
+PocketBase applies migrations only on start, and the deploy key can't restart containers. A systemd
+path unit on the host (in `vps-infra`) watches `pb_migrations/` and restarts the container when it
+changes. Hooks reload on their own.
+
+Repo secrets: `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`.
+
+Since the data no longer lives in the repo, the repo can be private. GitHub Pages is retired.
 
 ---
 
@@ -429,13 +417,13 @@ invited collaborators. That swap touches only the deploy workflow, not the app.
 | Build | Vite |
 | UI | React 19 + TypeScript (strict) |
 | Styling | Tailwind CSS v4 |
-| Validation | Zod — one schema shared by the app and the Action |
+| Backend | PocketBase (Go + SQLite), schema as JS migrations |
+| API client | `pocketbase` JS SDK |
+| Validation | Zod on the client; PocketBase field options, rules, and hooks on the server |
 | Icons | `lucide-react` |
 | Tests | Vitest |
-| Runtime deps | none beyond the above — no router, no state library, no date library |
 
-No router (single page). No date library (week bucketing is ~20 lines of `Date` math).
-No state manager (`useState` is sufficient).
+No router (one page, three views). No state manager (`useState` is sufficient). No date library.
 
 ---
 
@@ -470,8 +458,7 @@ Noto Naskh Arabic  →  headings
 Noto Sans Arabic   →  body, numbers, UI
 ```
 
-Self-host both via `@fontsource` — do **not** hit the Google Fonts CDN (privacy, and it's a
-render-blocking third-party request). `font-display: swap`.
+Self-host both via `@fontsource` — do **not** hit the Google Fonts CDN. `font-display: swap`.
 
 **All amounts use `font-variant-numeric: tabular-nums`** so columns don't jitter as digits change.
 
@@ -487,9 +474,10 @@ direction (chevrons, arrows) must mirror.
 - Body text ≥ 16px (below that, iOS auto-zooms on focus)
 - Visible focus rings — never `outline: none` without a replacement
 - `prefers-reduced-motion` respected; transitions 150–300ms
-- SVG icons only (`lucide-react`) — **no emoji as icons**
+- SVG icons only (`lucide-react`) — **no emoji as icons** (the ✎/🗑 in §5.2 are diagram shorthand)
 - Contrast ≥ 4.5:1 for text, verified in *both* themes
 - No horizontal scroll at 375px
+- Destructive actions (delete, deactivate) use the destructive token and always confirm
 
 ### Explicitly avoid
 
@@ -503,21 +491,28 @@ Tests where a bug would cost real money or silently corrupt data.
 
 **Must have:**
 
-- `splitAmount` — the invariant that shares always sum to `amount`, across many
-  `(amount, n)` pairs including all seven `n` values and awkward remainders
-- `splitAmount` — canonical-order tiebreak is deterministic and stable
+- `splitAmount` — shares always sum to `amount`, across many `(amount, n)` pairs and awkward
+  remainders
+- `splitAmount` — `position` tiebreak is deterministic, independent of click order, and stable when
+  positions have gaps (a deactivated member in the middle)
 - The canonical example: `100 / [ahmad, abu-obaida, kasem, abu-adnan]` → `25` each
 - Week bucketing — Saturday boundary, month boundary, year boundary
-- Week summary — `دفع`, `عليه`, `الصافي` on a fixture with a payer who isn't a sharer
+- Week summary — `دفع`, `عليه`, `الصافي` on a fixture with a payer who isn't a sharer; a
+  deactivated member still gets their row
 - Week summary — a payback zeroes the payer and reduces the receiver by the same amount; a member
   who appears *only* through a payback still gets a row; every net sums to zero
-- `suggestSettlements` — applying every suggested transfer leaves all balances at zero, and moves
-  exactly the outstanding total; canonical-order tiebreak is deterministic
-- Zod schema — rejects unknown member ids, empty `sharers`, zero/negative/float `amount`,
-  duplicate sharers, and a payback whose `from` equals its `to`
-- Issue-body parser — extracts the JSON block; rejects malformed input without throwing; routes on
-  `kind`; **still parses a payload with no `kind` as an expense**; rejects an unknown `kind`
+- `suggestSettlements` — applying every suggested transfer leaves all balances at zero; tiebreak is
+  deterministic
+- Zod — rejects zero/negative/float `amount`, empty `sharers`, duplicate sharers, `from === to`,
+  malformed `date`; response parsing skips a bad record without throwing
+- Import script mapping — every legacy slug maps to a member, and record count in = record count out
 - Feed grouping — purchases and paybacks land in the same Saturday week and interleave newest-first
+- Archive split — exactly `RECENT_WEEKS` recent weeks stay visible; an older settled week is archived;
+  an older week with any non-zero net stays in the main feed
+
+**Server rules** are verified once per change by a script against a throwaway local PocketBase
+(`npm run test:pb`): a non-admin cannot update/delete or create members, `createdBy` spoofing is
+rejected, a deactivated member cannot log in, a future date is rejected.
 
 **Skip:** component render smoke tests, presentational-prop assertions, mock-call-only tests.
 
@@ -527,33 +522,31 @@ Tests where a bug would cost real money or silently corrupt data.
 
 ```
 office-expenses/
-├── data/
-│   ├── entries/*.json             ← purchases; Action writes here, hand-editable
-│   └── payments/*.json            ← paybacks; same rules
+├── pocketbase/
+│   ├── pb_migrations/*.js        ← collections, fields, rules; seeds the 7 members
+│   └── pb_hooks/validate.pb.js   ← date window, from ≠ to, active-member checks
 ├── .github/workflows/
-│   ├── entry.yml                  ← issues.opened → validate → commit → call deploy
-│   └── deploy.yml                 ← on: push + workflow_call → build → Pages
-├── scripts/process-issue.mjs      ← parse + validate + write (used by entry.yml)
+│   └── deploy.yml                ← test → build → rsync web + pb_* to the VPS
+├── scripts/
+│   └── import-legacy.ts          ← one-off: data/**/*.json → PocketBase (§14)
 ├── src/
-│   ├── data/members.ts            ← the 7, canonical order
 │   ├── lib/
-│   │   ├── schema.ts              ← Zod for both types, shared with the Action
-│   │   ├── split.ts               ← largest-remainder
-│   │   ├── settle.ts              ← minimal transfers to zero every balance
-│   │   ├── week.ts                ← Saturday bucketing
-│   │   ├── summary.ts             ← per-week per-member paid/owed/settled/net
-│   │   ├── feed.ts                ← week grouping + expense/payback interleave
-│   │   ├── records.ts             ← shared glob-validate-sort loader
-│   │   ├── entries.ts             ← import.meta.glob + parseRecords
-│   │   ├── payments.ts            ← same, for paybacks
-│   │   └── issue-url.ts           ← prefilled URL builders (both kinds)
-│   ├── components/                ← small, one concern each
-│   │   ├── Sheet.tsx              ← shared bottom-sheet chrome
-│   │   ├── IssueActions.tsx       ← shared إرسال/نسخ pair + build notice
-│   │   └── SettleSuggestions.tsx  ← التسوية المقترحة, each row prefills the sheet
+│   │   ├── pb.ts                 ← the one PocketBase client instance
+│   │   ├── api.ts                ← typed fetch/create/update/delete, Zod-parsed
+│   │   ├── schema.ts             ← Zod for members, expenses, payments, and the forms
+│   │   ├── split.ts              ← largest-remainder by position
+│   │   ├── settle.ts             ← minimal transfers to zero every balance
+│   │   ├── week.ts               ← Saturday bucketing
+│   │   ├── summary.ts            ← per-week per-member paid/owed/settled/net
+│   │   └── feed.ts               ← week grouping + expense/payback interleave
+│   ├── components/
+│   │   ├── LoginView.tsx
+│   │   ├── MembersView.tsx       ← admin
+│   │   ├── Sheet.tsx             ← shared bottom-sheet chrome
+│   │   └── SettleSuggestions.tsx
 │   └── styles/tokens.css
 ├── AGENTS.md
-└── PROJECT_SPEC.md                ← this file
+└── PROJECT_SPEC.md               ← this file
 ```
 
 ---
@@ -562,19 +555,40 @@ office-expenses/
 
 | decision | choice | why |
 |---|---|---|
-| Write path | Prefilled GitHub issue → Action | No credential anywhere in a static app; the human's GitHub login *is* the auth |
-| Scope | Log + per-entry share + weekly summary | Cross-week running balances stay out; a week is the unit that gets settled |
-| Paybacks | Recorded as their own record type | "What's left to pay" is unanswerable if only debts are recorded and never repayments |
-| Debt model | Pot (one net per member) | 7 members would otherwise mean up to 21 pairwise lines; the office settles as a pot |
-| Payback routing | `kind` in the JSON block | Labels are silently dropped from `issues/new` URLs and absent on relayed submissions |
-| Payback storage | Separate `data/payments/` | Keeps both Zod schemas strict with no on-disk discriminator to disagree with the path |
-| Settle-up | Minimal-transfer suggestions | Makes the weekly table actionable, and one tap prefills the payback that zeroes it |
-| Payback date | Prefilled inside the settled week | Weekly-only tables mean a payback dated elsewhere never cancels the debt it settles |
-| Over/under payment | Allowed | The ledger records what happened; refereeing it is a person's job |
-| Currency | SYP, integer, largest-remainder | Shares must sum to the exact total; no float drift |
-| Freshness | Wait for rebuild (~1–2 min), stated honestly | Buys a far simpler app; no optimistic UI or reconciliation |
-| Visibility | Public repo | Free plan can't serve Pages from private; data is snack money |
-| Edit/delete | None in app; edit JSON on github.com | One data-entry person makes a UI for this pure cost |
+| Backend | PocketBase on the VPS | Auth, API, rules, realtime, admin UI, and backups in one ~20MB binary; no backend code to own |
+| Write path | Direct API calls, per-member login | Members need to add records themselves; the issue flow required a GitHub account per member |
+| Who writes | Any member creates; admin edits/deletes | Members log what they bought; one person referees corrections |
+| Visibility | Login to view | Data moved off a public repo; no reason to keep it world-readable |
+| Member removal | Deactivate, never delete | History references them; deleting would orphan or rewrite past weeks |
+| Canonical order | Immutable `position` | Renumbering would silently change historical splits |
+| `date` type | Plain `YYYY-MM-DD` text | A timezone-bearing date can shift a purchase into the wrong week |
+| Schema source | JS migrations in git | Dashboard edits drift silently from what the code expects |
+| Accountability | `createdBy` on every record | With seven writers, a wrong entry needs an author |
+| Scope | Log + per-entry share + weekly summary | A week is the unit that gets settled; no cross-week balance |
+| Paybacks | Their own collection | "What's left to pay" is unanswerable if only debts are recorded |
+| Debt model | Pot (one net per member) | Avoids a web of pairwise lines; the office settles as a pot |
+| Settle-up | Minimal-transfer suggestions | One tap prefills the payback that zeroes the week |
+| Payback date | Prefilled inside the settled week | A payback dated elsewhere never cancels the debt it settles |
+| Over/under payment | Allowed | The ledger records what happened |
+| Currency | SYP, integer, largest-remainder | Shares must sum to the exact total |
+| Freshness | Immediate + realtime | The rebuild wait was the price of having no backend; that price is gone |
+| Archive | Last 3 weeks shown; older folded, unless unsettled | Keeps the feed short without hiding a debt nobody has paid |
 | Week start | Saturday | Levant work week; one constant to change |
-| Submitters | `ahmadjz` only | Everyone else views; **نسخ** button covers WhatsApp relay |
-| Grouping | By week | Matches how office money actually gets settled |
+
+---
+
+## 14. Migration from the GitHub-issue design
+
+One-off, run once against production, then the legacy path is deleted.
+
+1. Migrations create the collections and seed the seven members with positions 1–7 and their legacy
+   slugs as usernames.
+2. `scripts/import-legacy.ts` (run locally with superuser credentials from env, never committed)
+   reads `data/entries/*.json` and `data/payments/*.json`, maps each slug to its member id by
+   `username`, and creates records **in legacy `createdAt` order** so PocketBase's `created`
+   preserves the same-day tiebreak. `createdBy` is `ahmad` for all imported records. It refuses to run
+   if `expenses` or `payments` is non-empty.
+3. Verify: record counts match, and every week's summary renders identical numbers before and after
+   (the script prints both).
+4. Then delete: `data/`, `entry.yml`, `scripts/process-issue.mjs`, `issue-url.ts`, `records.ts`,
+   `entries.ts`, `payments.ts`, `members.ts`, `IssueActions.tsx`, and the Pages deploy.
