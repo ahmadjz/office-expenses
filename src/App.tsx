@@ -10,6 +10,7 @@ import { secondaryButtonClass } from './components/ui'
 import { useAuth } from './hooks/useAuth'
 import { useLedger } from './hooks/useLedger'
 import { buildRoster } from './lib/roster'
+import { dismissPasswordPrompt, isPasswordPromptDismissed } from './lib/api'
 import type { Member } from './lib/schema'
 
 export default function App() {
@@ -36,7 +37,7 @@ function LoadingSkeleton() {
 function SignedInApp({ member }: { member: Member }) {
   const { state, reload } = useLedger()
   const [view, setView] = useState<View>('feed')
-  const [isPasswordPromptOpen, setIsPasswordPromptOpen] = useState(member.mustChangePassword)
+  const [isPasswordPromptOpen, setIsPasswordPromptOpen] = useState(() => member.mustChangePassword && !isPasswordPromptDismissed(member.id))
   const ledger = state.status === 'ready' ? state.ledger : null
   const roster = useMemo(() => buildRoster(ledger?.members ?? []), [ledger])
   const onChanged = () => void reload()
@@ -65,7 +66,7 @@ function SignedInApp({ member }: { member: Member }) {
       {ledger && view === 'feed' && <FeedView ledger={ledger} roster={roster} member={member} onChanged={onChanged} />}
       {ledger && view === 'members' && member.isAdmin && <MembersView roster={roster} signedInId={member.id} onChanged={onChanged} />}
       {view === 'account' && <AccountView member={member} />}
-      {isPasswordPromptOpen && <PasswordPrompt onClose={() => setIsPasswordPromptOpen(false)} />}
+      {isPasswordPromptOpen && <PasswordPrompt onClose={() => { dismissPasswordPrompt(member.id); setIsPasswordPromptOpen(false) }} />}
     </main>
   )
 }

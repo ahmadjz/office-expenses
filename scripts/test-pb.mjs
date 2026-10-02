@@ -143,6 +143,8 @@ const run = async () => {
   expectStatus('member cannot rename themselves while changing password', await call(obaida, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, { ...selfChange, name: 'x' }), 404)
   expectStatus('member cannot clear the flag without changing password', await call(obaida, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, { mustChangePassword: false }), 404)
   expectStatus('member cannot change another member password', await call(obaida, 'PATCH', `/collections/members/records/${id.ahmad}`, { oldPassword: PASSWORD, password: ownPassword, passwordConfirm: ownPassword }), 404)
+  expectStatus('admin cannot clear the password flag directly', await call(admin, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, { mustChangePassword: false }), 404)
+  expectStatus('admin cannot clear their own password flag directly', await call(admin, 'PATCH', `/collections/members/records/${id.ahmad}`, { mustChangePassword: false }), 404)
   expectStatus('admin cannot change own password with a wrong current one', await call(admin, 'PATCH', `/collections/members/records/${id.ahmad}`, { oldPassword: 'wrong', password: ownPassword, passwordConfirm: ownPassword }), 400)
   expectStatus('admin cannot change own password without the current one', await call(admin, 'PATCH', `/collections/members/records/${id.ahmad}`, { password: ownPassword, passwordConfirm: ownPassword }), 400)
   expectStatus('member changes own password',await call(obaida, 'PATCH', `/collections/members/records/${id['abu-obaida']}`, selfChange), 200)

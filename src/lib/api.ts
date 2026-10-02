@@ -60,13 +60,21 @@ export function subscribeToLedger(onChange: () => void): () => void {
 
 export async function login(username: string, password: string): Promise<void> {
   await pb.collection('members').authWithPassword(username.trim().toLowerCase(), password)
+  authNotice = null
 }
 
 const AUTH_REJECTED = new Set([401, 403, 404])
 
+let isChangingPassword = false
+let authNotice: string | null = null
+
+export function currentAuthNotice(): string | null {
+  return authNotice
+}
+
 export async function refreshSession(): Promise<void> {
   const { token, record } = pb.authStore
-  if (!token) return
+  if (!token || isChangingPassword) return
   if (!pb.authStore.isValid) {
     pb.authStore.clear()
     return
@@ -83,7 +91,30 @@ export async function refreshSession(): Promise<void> {
 }
 
 export function logout(): void {
+  try {
+    sessionStorage.removeItem(PROMPT_DISMISSED_KEY)
+  } catch {
+    // storage unavailable: the prompt simply shows again next time
+  }
   pb.authStore.clear()
+}
+
+const PROMPT_DISMISSED_KEY = 'password-prompt-dismissed'
+
+export function isPasswordPromptDismissed(memberId: MemberId): boolean {
+  try {
+    return sessionStorage.getItem(PROMPT_DISMISSED_KEY) === memberId
+  } catch {
+    return false
+  }
+}
+
+export function dismissPasswordPrompt(memberId: MemberId): void {
+  try {
+    sessionStorage.setItem(PROMPT_DISMISSED_KEY, memberId)
+  } catch {
+    // storage unavailable: dismissal lasts until reload
+  }
 }
 
 export function currentMemberId(): MemberId | null {
@@ -121,8 +152,18 @@ export async function resetPassword(id: MemberId, password: string): Promise<voi
 export async function changeOwnPassword(input: ChangePasswordInput): Promise<void> {
   const record = pb.authStore.record
   if (!record) throw new Error('not signed in')
-  await pb.collection('members').update(record.id, input)
-  await login(String(record.username), input.password)
+  isChangingPassword = true
+  try {
+    await pb.collection('members').update(record.id, input)
+    try {
+      await login(String(record.username), input.password)
+    } catch {
+      authNotice = 'تم تغيير كلمة المرور. ادخل بكلمة المرور الجديدة.'
+      pb.authStore.clear()
+    }
+  } finally {
+    isChangingPassword = false
+  }
 }
 
 export function errorMessage(error: unknown): string {

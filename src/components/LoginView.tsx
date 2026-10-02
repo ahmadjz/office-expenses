@@ -1,7 +1,7 @@
 import { LogIn } from 'lucide-react'
 import { useState, type SubmitEvent } from 'react'
 import { ClientResponseError } from 'pocketbase'
-import { errorMessage, login } from '../lib/api'
+import { errorMessage, login, currentAuthNotice } from '../lib/api'
 import { errorTextClass, inputClass, primaryButtonClass } from './ui'
 
 const BAD_CREDENTIALS = 'اسم المستخدم أو كلمة المرور غير صحيحة'
@@ -11,6 +11,7 @@ export function LoginView() {
   const [password, setPassword] = useState('')
   const [isWorking, setIsWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice] = useState(currentAuthNotice)
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -37,6 +38,7 @@ export function LoginView() {
           كلمة المرور
           <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" dir="ltr" required className={inputClass} />
         </label>
+        {notice && !error && <p role="status" className="text-sm text-[var(--color-positive)]">{notice}</p>}
         {error && <p role="alert" className={errorTextClass}>{error}</p>}
         <button type="submit" disabled={isWorking || !username || !password} className={`${primaryButtonClass} w-full`}>
           <LogIn aria-hidden="true" size={19} />{isWorking ? 'جارٍ الدخول…' : 'دخول'}
