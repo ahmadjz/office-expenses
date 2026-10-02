@@ -437,7 +437,7 @@ before publishing `web/`, so a frontend never lands ahead of the schema it needs
 
 Repo secrets: `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`.
 
-Since the data no longer lives in the repo, the repo can be private. GitHub Pages is retired.
+Since the data no longer lives in the repo, the repo can be private. The GitHub Pages site was removed on 2026-10-02.
 
 ---
 
